@@ -22,6 +22,7 @@ module SpinelHttp
   # listening socket is a fifth. The message is the HTTP layer's own and
   # names no application's settings; {#reason} is the constant that ends
   # it, for a caller that adds a hint of its own.
+  # @api public
   class PortInUse < StandardError
     # @return [Integer] the port that could not be bound
     attr_reader :port
@@ -69,6 +70,7 @@ module SpinelHttp
   # reuse_port: true binds with SO_REUSEPORT, so several processes can listen
   # on one port and, on Linux, the kernel splits connections between them.
   # Off, a second server on the port raises PortInUse.
+  # @api public
   class Server
     # One open connection, as the drain sees it: its socket, and whether its
     # thread is waiting for the next request on it (idle). The flag is
@@ -139,6 +141,7 @@ module SpinelHttp
     # logger: the {HttpLog} the server writes its lines to; the base, the
     # default, writes `"<level>: <msg>"` lines to standard error, and a
     # framework passes its own subclass.
+    # @api public
     def initialize(handler, host: "127.0.0.1", port: 3000, read_timeout: 15, drain_timeout: 10.0,
                    max_head_bytes: 65536, max_body_bytes: 10_485_760, logger: HttpLog.new,
                    reuse_port: false,
@@ -171,6 +174,7 @@ module SpinelHttp
     # Raises PortInUse when the port cannot be bound. With listen_fd the
     # inherited listener is already bound and listening, and port stays the
     # configured one.
+    # @api public
     def start
       # One Spinel worker is faster for an I/O-bound server (NOTES.md rule 15).
       # It must be set before the first Thread.new starts the scheduler.
@@ -187,6 +191,7 @@ module SpinelHttp
 
     # Starts the server and blocks until #stop or #request_stop is called
     # and the open connections have drained.
+    # @api public
     def run
       start
       wait
@@ -195,6 +200,7 @@ module SpinelHttp
     # Blocks until #stop or #request_stop is called and the open
     # connections have drained; #start must have run (start first, so a
     # bind failure surfaces before anything announces the server).
+    # @api public
     def wait
       thread = @accept_thread
       thread.join unless thread.nil?
@@ -205,6 +211,7 @@ module SpinelHttp
     # Stops accepting: the accept thread notices within ACCEPT_POLL seconds
     # and closes the listener. Returns once the connections still open have
     # finished their current request (at most drain_timeout seconds).
+    # @api public
     def stop
       request_stop
       thread = @accept_thread
@@ -214,6 +221,7 @@ module SpinelHttp
     end
 
     # Connections accepted and not yet closed.
+    # @api public
     def open_connections
       count = 0
       @lock.synchronize { count = @open_count }
@@ -225,6 +233,7 @@ module SpinelHttp
     # drains, which ends the idle connections. Spinel runs a trap block
     # straight from its C signal handler, where #stop's Thread#join, the
     # drain's sleep and the Mutex are not async-signal-safe.
+    # @api public
     def request_stop
       @running = false
       nil

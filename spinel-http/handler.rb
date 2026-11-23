@@ -7,7 +7,11 @@ module SpinelHttp
   # #call(request) and returns the Response to write; an exception it lets
   # escape becomes a 4xx/500 (see Server#respond). Typed as a base class so
   # Spinel can resolve #call statically.
+  # @api public
   class HttpHandler
+    # @param request [Request]
+    # @return [Response]
+    # @api public
     def call(request)
       Response.new
     end

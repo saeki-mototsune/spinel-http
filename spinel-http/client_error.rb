@@ -10,6 +10,7 @@ module SpinelHttp
   # here first, so a new client-fault class (a body-size or multipart limit,
   # say) is added once and every path answers alike instead of one of them
   # quietly answering 500.
+  # @api public
   module ClientError
     # The status for an exception out of the app, logged at the level it
     # deserves: a client fault (request parameters past Query's limits or
@@ -23,6 +24,7 @@ module SpinelHttp
     # @param e [Exception]
     # @param logger [HttpLog] the Server's sink, the base or a subclass
     # @return [Integer] 400, 415 or 500 ({.status_for})
+    # @api public
     def self.classify(e, logger)
       status = self.status_for(e)
       if status >= 500
@@ -80,6 +82,7 @@ module SpinelHttp
     # define `status` with other return types (NOTES.md rule 6).
     # @param e [Exception]
     # @return [Integer] 400, 415 or 500
+    # @api public
     def self.status_for(e)
       name = e.class.name.to_s
       return 415 if fault_name_in?(name, UNSUPPORTED_FAULTS)

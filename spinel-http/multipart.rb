@@ -54,7 +54,7 @@ module SpinelHttp
     # @param max_upload_bytes [Integer] the largest file part, in bytes
     # @param max_parts [Integer] the most parts (text and file) in one body
     # @return [nil]
-    # @api private
+    # @api public
     def self.configure(max_upload_bytes, max_parts)
       @max_upload_bytes = max_upload_bytes
       @max_parts = max_parts
@@ -62,13 +62,13 @@ module SpinelHttp
     end
 
     # @return [Integer] the largest file part accepted, in bytes
-    # @api private
+    # @api public
     def self.max_upload_bytes
       @max_upload_bytes
     end
 
     # @return [Integer] the most parts accepted in one body
-    # @api private
+    # @api public
     def self.max_parts
       @max_parts
     end

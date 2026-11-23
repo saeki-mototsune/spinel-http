@@ -3,7 +3,7 @@
 spinel-http builds and passes its tests under upstream Spinel (matz/spinel,
 2026.10.25) and under the fork (saeki-mototsune/spinel, 2026.11.15.7033). A
 workaround that upstream needs is taken even where the fork does not need it.
-Each rule names the upstream issue it comes from.
+Each rule names the upstream issue it comes from, where one is filed.
 
 ## Rules
 
@@ -76,7 +76,13 @@ upstream issue filed yet. A comment in the code cites the rule it follows as
    on a polymorphic receiver corrupted the inferred return type. A program
    built on the layer shares this namespace, so the layer's names are
    distinctive (`installed_switch`, not `installed`; `status_for`, not
-   `status`), and `redirect` and `drop_header` answer nil.
+   `status`), and `redirect` and `drop_header` answer nil. Not every clash
+   breaks a program: class methods sharing a name with other return types
+   have compiled and run, and the layer ships one such set, `parse`
+   (`Cookies.parse` a Hash, `Query.parse` a Params, `Multipart.parse` a
+   MultipartForm). That set is a record, not a precedent: the rule stands
+   for new code, and if a compiler refuses the set the remedy is a prefixed
+   name (`cookies_parse`).
 
 7. **Offsets into request text are bytes, and the text is validated as UTF-8
    once, first.** Spinel indexes a String holding non-ASCII text by

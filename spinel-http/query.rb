@@ -54,6 +54,7 @@ module SpinelHttp
 
   # Decoding/encoding for query strings and x-www-form-urlencoded bodies:
   # "a=1&b[]=2&b[]=3&post[title]=hi&flag" -> a Params tree.
+  # @api public
   module Query
     # Hard limits, taken from Rack. A request may be parsed before any auth
     # or CSRF check (a method override, a router), so a hostile query string

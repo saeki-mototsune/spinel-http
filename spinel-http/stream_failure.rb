@@ -11,12 +11,12 @@ module SpinelHttp
   # framework's error reporter installs a subclass that reports
   # ({SpinelHttp.stream_failure=}). An object with a method, not a stored
   # block, so Spinel resolves the call statically (NOTES.md rule 13).
-  # @api private
+  # @api public
   class StreamFailure
     # One writer's failure. The base does nothing. Must not raise.
     # @param error [Exception]
     # @return [nil]
-    # @api private
+    # @api public
     def stream_failed(error)
       nil
     end
@@ -29,15 +29,16 @@ module SpinelHttp
   # Where the Server tells a streamed body's failure: the base, which does
   # nothing, until an error reporter installs its reporting one.
   # @return [StreamFailure]
-  # @api private
+  # @api public
   def self.stream_failure
     @stream_failure
   end
 
-  # Installs what the Server tells a streamed body's failure.
+  # Installs what the Server tells a streamed body's failure, at boot,
+  # before any thread starts.
   # @param failure [StreamFailure]
   # @return [nil]
-  # @api private
+  # @api public
   def self.stream_failure=(failure)
     @stream_failure = failure
     nil

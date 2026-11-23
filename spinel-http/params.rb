@@ -19,6 +19,7 @@ module SpinelHttp
   # The request parameters as the HTTP layer parses them: Strings, lists of
   # Strings, nested Params and uploaded files, one kind per key. A framework
   # on top may reopen the class to add strong parameters.
+  # @api public
   class Params
     def initialize
       @values = {}

@@ -50,8 +50,9 @@ module SpinelHttp
 
     # A gzip member is at least a 10-byte header and an 8-byte trailer.
     GZIP_MIN_BYTES = 18
-    # The method, upper case, after a form's `_method` override (so
-    # `"PATCH"` for an edit form).
+    # The method, upper case. An application that applies a form's
+    # `_method` override ({#override_method!}) sees the overriding one
+    # (`"PATCH"` for an edit form); the layer applies none itself.
     # @return [String]
     # @api public
     attr_reader :method
@@ -194,7 +195,14 @@ module SpinelHttp
 
     # The quality of one `Accept` / `Accept-Language` entry already split at
     # ";": its `q` parameter as {quality_thousandths} reads it (the last one
-    # when it is given twice), 1000 without one. 0 refuses the entry.
+    # when it is given twice), 1000 without one. 0 refuses the entry, and
+    # so does -1 (text that is not a q-value). For a negotiation of one's
+    # own over another header (`Accept`), as {#negotiate_locale} does.
+    # @example
+    #   Request.entry_quality(["text/html", "q=0.8"])   # => 800
+    # @param parts [Array<String>]
+    # @return [Integer] 0..1000, or -1
+    # @api public
     def self.entry_quality(parts)
       q = 1000
       k = 1
@@ -209,6 +217,9 @@ module SpinelHttp
     # A q-value as thousandths (`"0.8"` is 800, `"1"` is 1000); -1 for text
     # that is not one (so the entry is dropped): `0` or `1` with at most
     # three decimals, no more than 1.
+    # @param value [String]
+    # @return [Integer] 0..1000, or -1
+    # @api public
     def self.quality_thousandths(value)
       q = value.to_s # NOTES.md rule 3
       return -1 if q.empty? || q.bytesize > 5
@@ -802,6 +813,8 @@ module SpinelHttp
     # @return [MultipartForm]
     # @raise [MultipartMalformed] for an encoded body or a malformed one; the
     #   Multipart* faults are client faults, answered 400
+    # @raise [UnsupportedMediaType] when no multipart parser is installed
+    #   (`require "spinel-http/multipart"` installs it), answered 415
     # @api public
     def multipart_form
       cached = @multipart_form
@@ -911,6 +924,10 @@ module SpinelHttp
     # must not mutate it, nor the Strings in it; one that needs to change
     # either dups it. The ivar starts as nil and is assigned from a method's
     # result (NOTES.md rule 5).
+    #
+    # The segments are not safe file names: `%2e%2e` decodes to `..`,
+    # `a%2fb` to `a/b` and `%00` to NUL. A static-file server refuses a
+    # segment that is `.` or `..` or holds `/` or NUL after decoding.
     def path_segments
       cached = @path_segments_cache
       return cached unless cached.nil?
@@ -999,54 +1016,54 @@ module SpinelHttp
       nil
     end
 
-# The proxies {#client_ip} trusts besides loopback: their entries as
-# given, and parsed (IpAddress.parse_network results end to end). Empty
-# until an application installs its list at boot; typed seeds (NOTES.md
-# rule 5).
-@trusted_proxy_entries = Array.new(0) { "" }
-@trusted_networks = Array.new(0) { 0 }
+    # The proxies {#client_ip} trusts besides loopback: their entries as
+    # given, and parsed (IpAddress.parse_network results end to end). Empty
+    # until an application installs its list at boot; typed seeds (NOTES.md
+    # rule 5).
+    @trusted_proxy_entries = Array.new(0) { "" }
+    @trusted_networks = Array.new(0) { 0 }
 
-# @return [Array<String>] the addresses and CIDRs whose connections may
-#   name the client in X-Forwarded-For ({#client_ip})
-# @api public
-def self.trusted_proxies
-  @trusted_proxy_entries
-end
+    # @return [Array<String>] the addresses and CIDRs whose connections may
+    #   name the client in X-Forwarded-For ({#client_ip})
+    # @api public
+    def self.trusted_proxies
+      @trusted_proxy_entries
+    end
 
-# Installs the trusted proxy list: IPv4 or IPv6 addresses or CIDRs
-# ("172.16.0.0/12", "10.0.0.0/8", "172.18.0.2", "fd00::/8"), at boot,
-# before any thread starts; a test may call it directly. An IPv4 entry also
-# matches its IPv4-mapped IPv6 form (`::ffff:172.18.0.2`).
-# @param entries [Array<String>]
-# @return [nil]
-# @raise [ArgumentError] when an entry is not an address or CIDR
-# @api public
-def self.trusted_proxies=(entries)
-  names = Array.new(0) { "" }
-  networks = Array.new(0) { 0 }
-  i = 0
-  while i < entries.size
-    entry = entries[i].to_s
-    parsed = IpAddress.parse_network(entry)
-    raise ArgumentError, "not an IP address or CIDR: #{entry.inspect}" if parsed.empty?
+    # Installs the trusted proxy list: IPv4 or IPv6 addresses or CIDRs
+    # ("172.16.0.0/12", "10.0.0.0/8", "172.18.0.2", "fd00::/8"), at boot,
+    # before any thread starts; a test may call it directly. An IPv4 entry also
+    # matches its IPv4-mapped IPv6 form (`::ffff:172.18.0.2`).
+    # @param entries [Array<String>]
+    # @return [nil]
+    # @raise [ArgumentError] when an entry is not an address or CIDR
+    # @api public
+    def self.trusted_proxies=(entries)
+      names = Array.new(0) { "" }
+      networks = Array.new(0) { 0 }
+      i = 0
+      while i < entries.size
+        entry = entries[i].to_s
+        parsed = IpAddress.parse_network(entry)
+        raise ArgumentError, "not an IP address or CIDR: #{entry.inspect}" if parsed.empty?
 
-    names << entry
-    parsed.each { |b| networks << b }
-    i += 1
-  end
-  @trusted_proxy_entries = names
-  @trusted_networks = networks
-  nil
-end
+        names << entry
+        parsed.each { |b| networks << b }
+        i += 1
+      end
+      @trusted_proxy_entries = names
+      @trusted_networks = networks
+      nil
+    end
 
-# Whether a connection from `addr` may name the client in
-# X-Forwarded-For: a loopback peer while {Request.trusted_proxy} is on,
-# or a peer inside one of {Request.trusted_proxies}.
-def self.trusted_peer?(addr)
-  return true if @trusted_proxy && Request.loopback_address?(addr)
+    # Whether a connection from `addr` may name the client in
+    # X-Forwarded-For: a loopback peer while {Request.trusted_proxy} is on,
+    # or a peer inside one of {Request.trusted_proxies}.
+    def self.trusted_peer?(addr)
+      return true if @trusted_proxy && Request.loopback_address?(addr)
 
-  IpAddress.in_networks?(addr, @trusted_networks)
-end
+      IpAddress.in_networks?(addr, @trusted_networks)
+    end
 
     # The longest address #client_ip takes from X-Forwarded-For: an IPv6
     # address with an embedded IPv4 one is at most 45 characters.
@@ -1079,15 +1096,15 @@ end
       "#{scheme}://#{host}"
     end
 
-# The client's address: {#remote_addr}, unless the connection comes from a
-# trusted proxy, in which case the last hop of X-Forwarded-For, the address
-# the proxy appended. A trusted proxy is a loopback peer ({#loopback?}) while
-# {Request.trusted_proxy} is on (a proxy on this host), or a peer inside one
-# of {Request.trusted_proxies} (`172.16.0.0/12`: a proxy in its own
-# container). Earlier hops are whatever the client wrote and are never used. A
-# last hop that is empty, longer than 45 bytes or not printable ASCII (or no
-# header at all) gives {#remote_addr}. What a rate limit would count by
-# default.
+    # The client's address: {#remote_addr}, unless the connection comes from a
+    # trusted proxy, in which case the last hop of X-Forwarded-For, the address
+    # the proxy appended. A trusted proxy is a loopback peer ({#loopback?}) while
+    # {Request.trusted_proxy} is on (a proxy on this host), or a peer inside one
+    # of {Request.trusted_proxies} (`172.16.0.0/12`: a proxy in its own
+    # container). Earlier hops are whatever the client wrote and are never used. A
+    # last hop that is empty, longer than 45 bytes or not printable ASCII (or no
+    # header at all) gives {#remote_addr}. What a rate limit would count by
+    # default.
     # @example
     #   log.info("sign-in from #{request.client_ip}")
     # @return [String]
