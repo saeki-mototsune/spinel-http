@@ -104,7 +104,9 @@ module SpinelHttp
     end
 
     # The headers set so far, in the case they were set with; change them
-    # through {#set_header} and {#drop_header}.
+    # through {#set_header} and {#drop_header}, which refuse CR and LF. A
+    # name or value holding either that is stored in this Hash directly is
+    # refused when the response is written ({#to_http}).
     # @return [Hash{String => String}]
     # @api public
     attr_reader :headers
@@ -236,9 +238,9 @@ module SpinelHttp
     # Removes the header of that name, whatever its case (every spelling
     # when several were stored); a missing one is not an error. Returns nil
     # (under Spinel a method name has one return type program-wide: NOTES.md
-    # rule 6). Edits
-    # @headers in place: `headers` is a public reader, so a Hash a caller
-    # took earlier must still be the live one afterwards. The
+    # rule 6). It edits the Hash of headers in place: `headers` is a public
+    # reader, so a Hash a caller took earlier must still be the live one
+    # afterwards. The
     # matching keys are collected first (never delete while iterating) and
     # removed with Hash#delete. `each_key`, not `keys.each`: where @headers
     # is boxed, `keys` dispatches over the program's own `keys` methods and
@@ -342,6 +344,10 @@ module SpinelHttp
     # Accepted deviation: Content-Length and the default
     # Content-Type are emitted for 204 too, although RFC 9110 section 8.6
     # forbids Content-Length in a 204.
+    #
+    # A header name or value, or a cookie, holding CR or LF raises
+    # ArgumentError, as {#set_header} does: one stored through {#headers} or
+    # {#cookies} directly skipped that check. The Server then answers 500.
     def to_http(head_only = false)
       out = +"HTTP/1.1 #{@status} #{status_text}\r\n"
       # A 304 describes no body: no Content-Type and no Content-Length
@@ -352,6 +358,8 @@ module SpinelHttp
         next if HeaderName.same?(name, "content-length")
         next if not_modified && HeaderName.same?(name, "content-type")
 
+        reject_crlf!(name, name)
+        reject_crlf!(name, value)
         out << name << ": " << value << "\r\n"
       end
       out << "X-Content-Type-Options: #{DEFAULT_NOSNIFF}\r\n" if header_key("x-content-type-options").nil?
@@ -359,6 +367,7 @@ module SpinelHttp
       add_permissions_policy(out)
       out << "Content-Length: #{@body.bytesize}\r\n" unless not_modified
       @cookies.each do |cookie|
+        reject_crlf!("Set-Cookie", cookie)
         out << "Set-Cookie: " << cookie << "\r\n"
       end
       out << "\r\n"
@@ -369,7 +378,8 @@ module SpinelHttp
     # The head of a streaming response, ending with the blank line: what
     # #to_http writes minus Content-Length (a streaming body has none), plus
     # `Transfer-Encoding: chunked` when `chunked`. An upgrade (#upgrade!)
-    # gets only the status line, its own headers and its cookies.
+    # gets only the status line, its own headers and its cookies. CR or LF
+    # in a header or cookie raises ArgumentError, as in {#to_http}.
     # @param chunked [Boolean]
     # @return [String]
     def to_http_head(chunked)
@@ -379,6 +389,8 @@ module SpinelHttp
       @headers.each do |name, value|
         next if HeaderName.same?(name, "content-length") || HeaderName.same?(name, "transfer-encoding")
 
+        reject_crlf!(name, name)
+        reject_crlf!(name, value)
         out << name << ": " << value << "\r\n"
       end
       unless upgrade
@@ -388,6 +400,7 @@ module SpinelHttp
       end
       out << "Transfer-Encoding: chunked\r\n" if chunked
       @cookies.each do |cookie|
+        reject_crlf!("Set-Cookie", cookie)
         out << "Set-Cookie: " << cookie << "\r\n"
       end
       out << "\r\n"

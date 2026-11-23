@@ -648,9 +648,24 @@ module SpinelHttp
       return respond_streaming(sock, request, response, writer, conn) unless writer.nil?
 
       keep_alive = request.keep_alive? && @running
-      response.set_header("Connection", keep_alive ? "keep-alive" : "close")
-      sock.write(response.to_http(request.head?))
+      connection = keep_alive ? "keep-alive" : "close"
+      response.set_header("Connection", connection)
+      sock.write(response_text(response, request.head?, connection))
       keep_alive
+    end
+
+    # The bytes of `response`, or of a 500 when Response#to_http refuses it:
+    # a header or cookie with CR or LF, stored through Response#headers or
+    # #cookies directly, past set_header's check. The 500 keeps the
+    # connection as the response would have. A plain method for the rescue
+    # (NOTES.md rule 11).
+    def response_text(response, head_only, connection)
+      response.to_http(head_only)
+    rescue ArgumentError => e
+      @logger.error("response not written: #{e.message}")
+      refused = error_response(500)
+      refused.set_header("Connection", connection)
+      refused.to_http(head_only)
     end
 
     # A streaming response: the head with

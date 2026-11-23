@@ -466,11 +466,10 @@ module SpinelHttp
       out
     end
 
-    # An RFC 9110 tchar: ALPHA, DIGIT or one of !#$%&'*+-.^_`|~.
+    # An RFC 9110 tchar ({HttpParser.tchar?}, which the parser checks
+    # field names with).
     def self.token_byte?(b)
-      return true if (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57)
-
-      b == 33 || (b >= 35 && b <= 39) || b == 42 || b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
+      HttpParser.tchar?(b)
     end
 
     # The largest Integer a 64-bit runtime holds; what an overlong

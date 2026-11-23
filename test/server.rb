@@ -33,6 +33,13 @@ class ServerTestApp < SpinelHttp::HttpHandler
       # `rescue StandardError` must catch it too.
       res.content_type = "application/json"
       res.body = JSON.generate(ServerTestApp.deep(150))
+    when "/inject"
+      # past set_header's CR/LF check, straight into the Hash
+      res.headers["X-Bad"] = "a\r\nInjected: yes"
+      res.body = "never sent"
+    when "/inject_cookie"
+      res.cookies << "a=b\r\nInjected: yes"
+      res.body = "never sent"
     when "/slow"
       $slow_started = true
       sleep 1
@@ -449,6 +456,35 @@ test "duplicate Content-Length headers get 400 and close the connection" do
   c.close
 end
 
+test "a bare LF hiding Transfer-Encoding in a header value gets 400, not a body framed by Content-Length" do
+  c = RawClient.new($server.port)
+  c.send_raw("POST /echo HTTP/1.1\r\nHost: t\r\nX: a\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n" \
+             "0\r\n\r\nGET /hello HTTP/1.1\r\nHost: t\r\n\r\n")
+  res = c.read_response(false)
+  assert_equal "HTTP/1.1 400 Bad Request", res.status_line
+  assert_equal "close", res.header("connection")
+  assert c.closed_by_server?
+  c.close
+end
+
+test "a NUL in a header value gets 400 and the connection closes" do
+  c = RawClient.new($server.port)
+  c.send_raw("GET /hello HTTP/1.1\r\nHost: t\r\nX: a" + 0.chr + "b\r\n\r\n")
+  assert_equal "HTTP/1.1 400 Bad Request", c.read_response(false).status_line
+  assert c.closed_by_server?
+  c.close
+end
+
+test "a header name with a byte outside the token set gets 400" do
+  ["Content-Length\v: 2", "X(y): 1", "X\x7F: 1"].each do |line|
+    c = RawClient.new($server.port)
+    c.send_raw("POST /echo HTTP/1.1\r\nHost: t\r\n#{line}\r\n\r\nok")
+    assert_equal "HTTP/1.1 400 Bad Request", c.read_response(false).status_line
+    assert c.closed_by_server?
+    c.close
+  end
+end
+
 # ---- protocol boundaries the server takes a position on ----
 
 test "Transfer-Encoding beside a Content-Length is refused, and the bytes behind it are never read as a request" do
@@ -557,6 +593,23 @@ test "a JSON::ParserError in the app gets 500 and the server keeps serving" do
   c2 = RawClient.new($server.port)
   assert_equal "hi", c2.get("/hello", "Connection: close\r\n").body
   c2.close
+end
+
+test "a header or cookie stored past set_header's CR/LF check gets 500, and nothing is injected" do
+  c = RawClient.new($server.port)
+  res = c.get("/inject")
+  assert_equal "HTTP/1.1 500 Internal Server Error", res.status_line
+  assert_equal "", res.header("injected")
+  assert_equal "", res.header("x-bad")
+  assert_equal "Internal Server Error", res.body
+  assert_logged $log.string, "ERROR", "response not written: header X-Bad must not contain CR or LF"
+  # the connection stays as the response would have left it
+  cookie = c.get("/inject_cookie")
+  assert_equal "HTTP/1.1 500 Internal Server Error", cookie.status_line
+  assert_equal "", cookie.header("injected")
+  assert_equal "", cookie.header("set-cookie")
+  assert_equal "hi", c.get("/hello", "Connection: close\r\n").body
+  c.close
 end
 
 test "an idle keep-alive connection is closed after read_timeout" do

@@ -7,7 +7,10 @@ ok   bad request line raises ParseError
 ok   header line without a colon raises ParseError
 ok   header names with whitespace before the colon or inside are rejected
 ok   a bare CR inside a header line is rejected
+ok   a bare LF inside a header line is rejected, so no header hides behind it
+ok   a NUL in a header value, a name or the request line is rejected
+ok   a header name holding a byte that is not a token character is rejected
 ok   empty lines before the request line are ignored
 ok   HTTP/1.0 is accepted
 ok   HTTP/2.0 raises ParseError
-12 tests, 37 assertions, 0 failures
+15 tests, 52 assertions, 0 failures

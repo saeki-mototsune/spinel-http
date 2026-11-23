@@ -17,6 +17,9 @@ ok   a body with NUL bytes is framed by bytes, not cut at the NUL
 ok   chunked transfer encoding gets 411 and the connection closes
 ok   an invalid Content-Length gets 400
 ok   duplicate Content-Length headers get 400 and close the connection
+ok   a bare LF hiding Transfer-Encoding in a header value gets 400, not a body framed by Content-Length
+ok   a NUL in a header value gets 400 and the connection closes
+ok   a header name with a byte outside the token set gets 400
 ok   Transfer-Encoding beside a Content-Length is refused, and the bytes behind it are never read as a request
 ok   Transfer-Encoding: identity is a transfer coding too: 411
 ok   a rejected request ends the connection: a request pipelined behind it is not answered
@@ -28,6 +31,7 @@ ok   an exception in the app gets 500 and the connection stays usable
 ok   parameters past Query's limits get 400, not 500, and the connection stays usable
 ok   a JSON::NestingError in the app gets 500, the connection is closed and the server keeps serving
 ok   a JSON::ParserError in the app gets 500 and the server keeps serving
+ok   a header or cookie stored past set_header's CR/LF check gets 500, and nothing is injected
 ok   an idle keep-alive connection is closed after read_timeout
 ok   a failed accept is logged and the server keeps accepting
 ok   stop makes the port refuse connections
@@ -62,4 +66,4 @@ ok   listen_fd naming a read-write regular file raises PortInUse
 ok   listen_fd naming a connected socket that does not listen raises PortInUse
 ok   where SO_ACCEPTCONN cannot be read (macOS) an inherited listener is still served
 ok   where SO_ACCEPTCONN cannot be read (macOS) a file, a closed number and a connected socket are still refused
-64 tests, 254 assertions, 0 failures
+68 tests, 274 assertions, 0 failures

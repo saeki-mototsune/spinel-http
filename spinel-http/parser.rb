@@ -31,7 +31,10 @@ module SpinelHttp
       first += 1 while first < lines.size && lines[first].empty?
       raise ParseError, "empty request" if first >= lines.size
 
-      method, target, version = parse_request_line(lines[first])
+      request_line = lines[first]
+      raise ParseError, "CR, LF or NUL in the request line" if HttpParser.control_byte_index(request_line) >= 0
+
+      method, target, version = parse_request_line(request_line)
       header_values = {}
       i = first + 1
       while i < lines.size
@@ -39,17 +42,22 @@ module SpinelHttp
         i += 1
         next if line.empty?
 
-        raise ParseError, "bare CR in header line: #{line}" if line.include?("\r")
+        # RFC 9110 section 5.5: a field line holding CR, LF or NUL is
+        # refused, not repaired. A front end may take a bare LF for a line
+        # end (RFC 9112 section 2.2) and see a header that this parser would
+        # read as part of a value ("X: a\nTransfer-Encoding: chunked").
+        raise ParseError, "CR, LF or NUL in a header line" if HttpParser.control_byte_index(line) >= 0
 
         colon = line.index(":")
         raise ParseError, "malformed header line: #{line}" if colon.nil? || colon == 0
 
-        # RFC 9112 section 5.1: no whitespace before the colon or inside the
-        # name (a request-smuggling vector); this also rejects obs-fold lines.
+        # RFC 9110 section 5.1: a field name is a token. That refuses
+        # whitespace before the colon or inside the name (RFC 9112 section
+        # 5.1, a request-smuggling vector), obs-fold lines, and any other
+        # byte a front end might drop or fold ("Content-Length\v").
         name = line[0, colon]
-        if name.include?(" ") || name.include?("\t")
-          raise ParseError, "invalid header name: #{line}"
-        end
+        raise ParseError, "invalid header name: #{line}" unless HttpParser.field_name_token?(name)
+
         name = name.downcase
         value = line[colon + 1, line.size - colon - 1].strip
         values = header_values[name]
@@ -75,6 +83,45 @@ module SpinelHttp
         raise ParseError, "unsupported HTTP version: #{version}"
       end
       [parts[0], parts[1], version]
+    end
+
+    # The byte offset of the first CR, LF or NUL in `text`, -1 when it has
+    # none. A byte loop: a String literal holding NUL is not safe to search
+    # for under Spinel (NOTES.md rule 8), and the scan allocates nothing.
+    def self.control_byte_index(text)
+      s = text.to_s # NOTES.md rule 3
+      n = s.bytesize
+      i = 0
+      while i < n
+        b = s.getbyte(i)
+        return i if b == 13 || b == 10 || b == 0
+
+        i += 1
+      end
+      -1
+    end
+
+    # Whether `text` is an RFC 9110 token (one or more tchar), as a field
+    # name must be.
+    def self.field_name_token?(text)
+      s = text.to_s # NOTES.md rule 3
+      n = s.bytesize
+      return false if n == 0
+
+      i = 0
+      while i < n
+        return false unless HttpParser.tchar?(s.getbyte(i))
+
+        i += 1
+      end
+      true
+    end
+
+    # An RFC 9110 tchar: ALPHA, DIGIT or one of !#$%&'*+-.^_`|~.
+    def self.tchar?(b)
+      return true if (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57)
+
+      b == 33 || (b >= 35 && b <= 39) || b == 42 || b == 43 || b == 45 || b == 46 || b == 94 || b == 95 || b == 96 || b == 124 || b == 126
     end
 
     # True when text is one or more ASCII digits, false for "" (the

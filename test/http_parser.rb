@@ -65,6 +65,36 @@ test "a bare CR inside a header line is rejected" do
   assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nX-A: a\rInjected: b") }
 end
 
+test "a bare LF inside a header line is rejected, so no header hides behind it" do
+  # A front end that ends lines at a bare LF (RFC 9112 section 2.2 allows
+  # it) would see Transfer-Encoding here; this parser must not read it as
+  # part of X's value.
+  assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nX: a\nTransfer-Encoding: chunked\r\nContent-Length: 5") }
+  assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nX: a\n") }
+  assert_raises("ParseError") { HttpParser.parse_head("GET /\n HTTP/1.1\r\nHost: x") }
+  assert_raises("ParseError") { HttpParser.parse_head("GET\n/ HTTP/1.1\r\nHost: x") }
+end
+
+test "a NUL in a header value, a name or the request line is rejected" do
+  nul = 0.chr
+  assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nX: a" + nul + "b") }
+  assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nX" + nul + ": b") }
+  assert_raises("ParseError") { HttpParser.parse_head("GET /" + nul + " HTTP/1.1\r\nHost: x") }
+end
+
+test "a header name holding a byte that is not a token character is rejected" do
+  msg = assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nContent-Length\v: 5") }
+  assert_includes msg, "invalid header name"
+  assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nX\f: 5") }
+  assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nX(y): 5") }
+  assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nX\\y: 5") }
+  assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nX\x7F: 5") }
+  assert_raises("ParseError") { HttpParser.parse_head("GET / HTTP/1.1\r\nCaf\u00E9: 5") }
+  # Every tchar is a name byte; a value keeps its tabs and other bytes.
+  head = HttpParser.parse_head("GET / HTTP/1.1\r\nX-Ok_1!#$%&'*+.^`|~: a\tb \u00E9")
+  assert_equal "a\tb \u00E9", head.headers["x-ok_1!#$%&'*+.^`|~"]
+end
+
 test "empty lines before the request line are ignored" do
   head = HttpParser.parse_head("\r\nGET / HTTP/1.1\r\nHost: x")
   assert_equal "GET", head.method
