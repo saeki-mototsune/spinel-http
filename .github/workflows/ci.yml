@@ -43,19 +43,27 @@ jobs:
           spin flags
           spin test
 
+      # The README's first ruby block is examples/hello/bin/hello.rb; it is
+      # built, answers a request, and exits 0 on TERM (run drains, then
+      # returns).
       - name: Hello example
         run: |
+          awk '/^```ruby$/ { inside = 1; next } /^```$/ && inside { exit } inside' README.md |
+            diff - examples/hello/bin/hello.rb
           cd examples/hello
           spin build
           PORT=18080 build/bin/hello &
           server=$!
           out=""
           for i in $(seq 1 20); do
-            out=$(curl -fsS http://127.0.0.1:18080/ 2>/dev/null) && break
+            out=$(curl -fsS --max-time 5 http://127.0.0.1:18080/) && break
             sleep 0.5
           done
-          kill $server
+          kill -TERM $server
+          status=0
+          wait $server || status=$?
           test "$out" = "hello" || { echo "unexpected output: '$out'"; exit 1; }
+          test "$status" = 0 || { echo "hello exited $status on TERM"; exit 1; }
 
   # The fork (saeki-mototsune/spinel), the fork's release tag.
   fork:
@@ -90,16 +98,24 @@ jobs:
           spin flags
           spin test
 
+      # The README's first ruby block is examples/hello/bin/hello.rb; it is
+      # built, answers a request, and exits 0 on TERM (run drains, then
+      # returns).
       - name: Hello example
         run: |
+          awk '/^```ruby$/ { inside = 1; next } /^```$/ && inside { exit } inside' README.md |
+            diff - examples/hello/bin/hello.rb
           cd examples/hello
           spin build
           PORT=18080 build/bin/hello &
           server=$!
           out=""
           for i in $(seq 1 20); do
-            out=$(curl -fsS http://127.0.0.1:18080/ 2>/dev/null) && break
+            out=$(curl -fsS --max-time 5 http://127.0.0.1:18080/) && break
             sleep 0.5
           done
-          kill $server
+          kill -TERM $server
+          status=0
+          wait $server || status=$?
           test "$out" = "hello" || { echo "unexpected output: '$out'"; exit 1; }
+          test "$status" = 0 || { echo "hello exited $status on TERM"; exit 1; }
