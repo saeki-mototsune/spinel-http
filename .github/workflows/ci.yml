@@ -43,7 +43,7 @@ jobs:
           spin flags
           spin test
 
-  # The fork (saeki-mototsune/spinel), the release `cybertrain setup` builds.
+  # The fork (saeki-mototsune/spinel), the fork's release tag.
   fork:
     runs-on: ubuntu-26.04
     timeout-minutes: 45

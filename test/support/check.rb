@@ -13,6 +13,10 @@
 # A case runs when `test` is called. `summary` prints the totals and exits
 # non-zero when anything failed.
 #
+# Assertions: assert, refute, assert_equal, assert_nil, assert_includes and
+# assert_raises, with Minitest's failure texts (assert_raises takes a Class,
+# or a String matched against the raised class's name).
+#
 # Written for both Spinel compilers (NOTES.md): an assertion answers nil, and
 # a call that answers nil is never passed as an argument (rule 126), so
 # `dropped = res.drop_header("X")`, then `assert_nil dropped`.
@@ -70,29 +74,117 @@ module SpinelHttpTest
     nil
   end
 
-  def self.check_nil(value)
-    count
-    return nil if value.nil?
+  BUILTIN_PARENTS = {
+    "Exception" => "", "StandardError" => "Exception", "ScriptError" => "Exception",
+    "NoMemoryError" => "Exception", "SecurityError" => "Exception", "SignalException" => "Exception",
+    "SystemExit" => "Exception", "SystemStackError" => "Exception", "Interrupt" => "SignalException",
+    "LoadError" => "ScriptError", "NotImplementedError" => "ScriptError", "SyntaxError" => "ScriptError",
+    "ArgumentError" => "StandardError", "EncodingError" => "StandardError", "FiberError" => "StandardError",
+    "IOError" => "StandardError", "IndexError" => "StandardError", "LocalJumpError" => "StandardError",
+    "NameError" => "StandardError", "RangeError" => "StandardError", "RegexpError" => "StandardError",
+    "RuntimeError" => "StandardError", "SystemCallError" => "StandardError", "ThreadError" => "StandardError",
+    "TypeError" => "StandardError", "ZeroDivisionError" => "StandardError", "EOFError" => "IOError",
+    "KeyError" => "IndexError", "StopIteration" => "IndexError", "ClosedQueueError" => "StopIteration",
+    "NoMethodError" => "NameError", "FloatDomainError" => "RangeError", "FrozenError" => "RuntimeError",
+    "UncaughtThrowError" => "ArgumentError", "NoMatchingPatternError" => "StandardError",
+    "NoMatchingPatternKeyError" => "NoMatchingPatternError", "Math::DomainError" => "StandardError",
+    "Timeout::Error" => "RuntimeError", "Timeout::ExitException" => "Exception", "SocketError" => "StandardError",
+    "Date::Error" => "ArgumentError", "JSON::JSONError" => "StandardError", "JSON::ParserError" => "JSON::JSONError",
+    "JSON::NestingError" => "JSON::ParserError", "JSON::GeneratorError" => "JSON::JSONError",
+    "Encoding::CompatibilityError" => "EncodingError", "Encoding::UndefinedConversionError" => "EncodingError",
+    "Encoding::InvalidByteSequenceError" => "EncodingError", "Encoding::ConverterNotFoundError" => "EncodingError",
+    "URI::Error" => "StandardError", "URI::InvalidURIError" => "URI::Error",
+    "URI::InvalidComponentError" => "URI::Error", "URI::BadURIError" => "URI::Error",
+    "IO::EAGAINWaitReadable" => "Errno::EAGAIN", "IO::EAGAINWaitWritable" => "Errno::EAGAIN",
+    "IO::TimeoutError" => "IOError", "Regexp::TimeoutError" => "RegexpError"
+  }.freeze
 
-    text = "Expected #{value.inspect} to be nil"
+  # The name assert_raises prints for what it expects: the class's name, the
+  # text given, or StandardError when nothing was.
+  def self.expected_text(expected)
+    case expected
+    when String then expected == "" ? "StandardError" : expected
+    else expected.name.to_s
+    end
+  end
+
+  # Whether the raised class is what `expected` names: a Class by name along
+  # the superclass chain, a String as part of the name, "" any StandardError
+  # (`standard`: the exception is one). A built-in class whose parent is
+  # unknown fails the assertion when it is a StandardError, and does not match
+  # (so it is raised on) when it is not.
+  def self.raised_matches?(expected, raised, standard)
+    if expected.is_a?(String)
+      return standard if expected == ""
+
+      return raised.name.to_s.include?(expected)
+    end
+    want = expected.name.to_s
+    k = raised
+    name = k.name.to_s
+    builtin = false
+    loop do
+      return true if name == want
+
+      parent = builtin_parent(name)
+      if parent.nil? && !builtin
+        up = superclass_or_nil(k)
+        if up.nil?
+          return false unless standard
+
+          text = "assert_raises: the parent class of #{name} is not known under Spinel; " \
+                 "expect #{name} itself, or compare by name: assert_raises(\"#{want}\")"
+          fail_with(text)
+        end
+        k = up
+        name = k.name.to_s
+      else
+        builtin = true
+        return false if parent.nil? || parent == ""
+
+        name = parent
+      end
+    end
+    false
+  end
+
+  # The parent of one of Ruby's own exception classes, by name.
+  def self.builtin_parent(name)
+    parent = BUILTIN_PARENTS[name]
+    return parent unless parent.nil?
+    return "SystemCallError" if name.start_with?("Errno::")
+
+    nil
+  end
+
+  # A user class's superclass; nil where `superclass` raises, as it does
+  # under Spinel for a class of Ruby's own in a program that defines a module.
+  def self.superclass_or_nil(klass)
+    klass.superclass
+  rescue StandardError
+    nil
+  end
+
+  # assert_raises, given what its block raised: a failed assertion the caller
+  # did not name is raised on, and so is an unexpected exception that is not a
+  # StandardError; another class than expected fails with Minitest's text.
+  def self.raise_unless_expected(expected, exception)
+    name = exception.class.name.to_s
+    if name.include?("AssertionFailed") && !expected_text(expected).include?("AssertionFailed")
+      raise exception
+    end
+    return nil if raised_matches?(expected, exception.class, exception.is_a?(StandardError))
+    raise exception unless exception.is_a?(StandardError)
+
+    text = "[#{expected_text(expected)}] exception expected, not\nClass: <#{name}>\nMessage: <#{exception.message.inspect}>"
     fail_with(text)
     nil
   end
 
-  def self.check_includes(collection, item)
-    count
-    return nil if collection.include?(item)
+  def self.check_raised(expected, raised)
+    return nil if raised
 
-    text = "Expected #{collection.inspect} to include #{item.inspect}"
-    fail_with(text)
-    nil
-  end
-
-  def self.check_raised(klass_name, raised, got)
-    count
-    return nil if raised && got == klass_name
-
-    text = raised ? "#{klass_name} expected, not #{got}" : "#{klass_name} expected but nothing was raised."
+    text = "#{expected_text(expected)} expected but nothing was raised."
     fail_with(text)
     nil
   end
@@ -102,40 +194,66 @@ def test(name, &block)
   SpinelHttpTest.test(name, &block)
 end
 
-def assert(condition, message = "")
-  SpinelHttpTest.count
-  return nil if condition
+def flunk(message)
+  raise SpinelHttpAssertionFailed, message
+end
 
-  text = message.empty? ? "Expected condition to be truthy" : message
-  SpinelHttpTest.fail_with(text)
-  nil
+def assert(condition, message = "expected condition to be truthy")
+  SpinelHttpTest.count
+  flunk(message) unless condition
+end
+
+def refute(condition, message = "expected condition to be falsy")
+  SpinelHttpTest.count
+  flunk(message) if condition
 end
 
 def assert_equal(expected, actual)
   SpinelHttpTest.check_equal(expected, actual)
 end
 
-def assert_nil(value)
-  SpinelHttpTest.check_nil(value)
+def assert_nil(actual)
+  SpinelHttpTest.count
+  flunk("expected nil, got #{actual.inspect}") unless actual.nil?
 end
 
-def assert_includes(collection, item)
-  SpinelHttpTest.check_includes(collection, item)
+# Passes when a String contains `needle.to_s` or an Array includes `needle`.
+# Any other haystack fails. The receiver is narrowed first and the String
+# case goes through #index (include? on a polymorphic receiver mis-dispatches
+# under Spinel).
+def assert_includes(haystack, needle)
+  SpinelHttpTest.count
+  found = false
+  case haystack
+  when String
+    n = needle.to_s
+    found = !haystack.index(n).nil?
+  when Array
+    found = haystack.include?(needle)
+  end
+  unless found
+    flunk("expected #{haystack.inspect} to include #{needle.inspect}")
+  end
 end
 
-# Passes when the block raises exactly `klass` (compared by name; a
-# subclass does not count). Answers the exception's message.
-def assert_raises(klass)
-  raised = false
-  got = ""
+# Passes when the block raises the exception `expected` names, and answers
+# that exception's message (a String). A Class matches that class or a
+# subclass; a String matches a class whose name contains it; nothing given
+# matches any StandardError. A failed assertion inside the block is raised on
+# unless `expected` names AssertionFailed. Failures: `[ArgumentError]
+# exception expected, not` with the raised class and message on the next two
+# lines, or `ArgumentError expected but nothing was raised.`
+def assert_raises(expected = "")
+  SpinelHttpTest.count
   message = ""
+  raised = false
   begin
     yield
-  rescue StandardError => e
+  rescue Exception => e
+    SpinelHttpTest.raise_unless_expected(expected, e)
     raised = true
-    got = e.class.name
     message = e.message
   end
-  SpinelHttpTest.check_raised(klass.name, raised, got)
+  SpinelHttpTest.check_raised(expected, raised)
   message
 end

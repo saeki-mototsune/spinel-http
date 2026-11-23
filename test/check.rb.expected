@@ -1,6 +1,12 @@
 ok   assert passes on a truthy value
-ok   assert_equal passes on equal values
-ok   assert_nil passes on nil
-ok   assert_includes passes on a member
-ok   assert_raises passes when the block raises
-5 tests, 5 assertions, 0 failures
+ok   assert fails with its message, or the default
+ok   refute passes on false and nil
+ok   refute fails with its message, or the default
+ok   assert_equal passes on equal values and fails with two lines
+ok   assert_nil passes on nil and fails with the value
+ok   assert_includes covers a String and an Array
+ok   assert_raises matches a class, a subclass and a name
+ok   assert_raises answers the message
+ok   assert_raises fails with Minitest's texts
+ok   assert_raises raises on a failed assertion inside the block
+11 tests, 51 assertions, 0 failures
