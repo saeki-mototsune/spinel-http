@@ -1,7 +1,9 @@
 #!/usr/bin/env ruby
-# Guards the boundary of the library: no file under spinel-http/ may require
-# anything outside spinel-http/, other than the Ruby standard-library names
-# in ALLOWED. The library must load on its own.
+# Guards the boundary of the library: no file of it (spinel-http.rb and
+# spinel-http/) may require anything outside spinel-http/, other than the
+# Ruby standard-library names in ALLOWED. The library must load on its own.
+# It also checks that SpinelHttp::VERSION in spinel-http.rb is the version
+# spin.toml publishes.
 #
 # usage: ruby script/check-standalone [--self-test]
 ALLOWED = %w[socket json digest uri].freeze
@@ -30,7 +32,19 @@ end
 
 def check(root)
   files = Dir.glob("spinel-http/**/*.rb", base: root).sort
+  files.unshift("spinel-http.rb") if File.exist?(File.join(root, "spinel-http.rb"))
   [files, offences(root, files)]
+end
+
+# The version spin.toml's [package] gives and the one spinel-http.rb's
+# VERSION constant holds ("" where either is missing).
+def versions(root)
+  toml = File.read(File.join(root, "spin.toml"))
+  package = toml[/^\[package\]\s*\n(.*?)(?=^\[|\z)/m, 1].to_s
+  published = package[/^version\s*=\s*"([^"]*)"/, 1].to_s
+  entry = File.join(root, "spinel-http.rb")
+  constant = File.exist?(entry) ? File.read(entry)[/^\s*VERSION\s*=\s*"([^"]*)"/, 1].to_s : ""
+  [published, constant]
 end
 
 if ARGV == ["--self-test"]
@@ -43,14 +57,23 @@ if ARGV == ["--self-test"]
     File.write(File.join(bad, "spinel-http", "a.rb"), "require \"json\"\nrequire \"rails\"\nrequire_relative \"../other\"\n")
     File.write(File.join(good, "spinel-http", "a.rb"), "require \"json\"\nrequire \"spinel-http/b\"\nrequire_relative \"b\"\n# require \"rails\"\n")
     File.write(File.join(good, "spinel-http", "b.rb"), "module B; end\n")
+    File.write(File.join(bad, "spinel-http.rb"), "require \"rails\"\nmodule SpinelHttp\n  VERSION = \"0.2.0\"\nend\n")
+    File.write(File.join(good, "spinel-http.rb"), "require \"spinel-http/b\"\nmodule SpinelHttp\n  VERSION = \"0.1.0\"\nend\n")
+    toml = "[package]\nname = \"spinel-http\"\nversion = \"0.1.0\"\n\n[dependencies]\nversion = \"9\"\n"
+    File.write(File.join(bad, "spin.toml"), toml)
+    File.write(File.join(good, "spin.toml"), toml)
     _, bad_found = check(bad)
     _, good_found = check(good)
-    if bad_found.length != 2
-      warn "self-test: the failing fixture reported #{bad_found.length} offences, expected 2"
+    if bad_found.length != 3
+      warn "self-test: the failing fixture reported #{bad_found.length} offences, expected 3"
       exit 1
     end
     unless good_found.empty?
       warn "self-test: the passing fixture reported: #{good_found.join("; ")}"
+      exit 1
+    end
+    if versions(bad) != ["0.1.0", "0.2.0"] || versions(good) != ["0.1.0", "0.1.0"]
+      warn "self-test: versions read #{versions(bad).inspect} and #{versions(good).inspect}"
       exit 1
     end
   end
@@ -61,8 +84,13 @@ end
 root = File.expand_path("..", __dir__)
 files, found = check(root)
 unless found.empty?
-  warn "spinel-http/ requires code outside itself:"
+  warn "spinel-http requires code outside spinel-http/:"
   found.each { |o| warn "  #{o}" }
   exit 1
 end
-puts "standalone: #{files.length} files, none requiring outside spinel-http/"
+published, constant = versions(root)
+if published.empty? || published != constant
+  warn "spin.toml publishes version #{published.inspect}, but SpinelHttp::VERSION in spinel-http.rb is #{constant.inspect}"
+  exit 1
+end
+puts "standalone: #{files.length} files, none requiring outside spinel-http/; version #{published}"
