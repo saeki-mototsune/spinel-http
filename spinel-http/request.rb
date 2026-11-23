@@ -138,72 +138,6 @@ module SpinelHttp
       @decoded_body = nil
       @multipart_form = nil
       @path_segments_cache = nil
-      @format_extension = ""
-      @format_known = false
-      @format_symbol = :html
-    end
-
-    # The extension a router split off the last path segment (`"json"` for
-    # `/articles/3.json`), `""` for none or before routing.
-    # @return [String]
-    # @api public
-    attr_reader :format_extension
-
-    # Set by a router for the route that matched; forgets a {#format}
-    # worked out earlier.
-    def format_extension=(ext)
-      @format_extension = ext
-      @format_known = false
-    end
-
-    # The format the client asked for, as a Symbol: the extension's
-    # registered name ({Request.format_for_extension}: `:json` for
-    # `/articles/3.json`, `:unknown` for one that is not registered), else
-    # from `Accept`, read in order: `:turbo_stream` when it lists
-    # `text/vnd.turbo-stream.html`, `:json` when it lists
-    # `application/json` and not `text/html` before it, else `:html` (also
-    # for `*/*` and no `Accept` at all). An entry with `q=0` is ignored;
-    # other q-values do not reorder the list.
-    # @example
-    #   request.format   # => :json for GET /articles/3.json
-    # @return [Symbol]
-    # @api public
-    def format
-      return @format_symbol if @format_known
-
-      found = if @format_extension.empty?
-                Request.format_for_accept(header("Accept").to_s)
-              else
-                Request.format_for_extension(@format_extension)
-              end
-      @format_symbol = found
-      @format_known = true
-      found
-    end
-
-    # The format an `Accept` header names (see {#format}).
-    def self.format_for_accept(value)
-      accept = value.to_s # a fresh String for the scan
-      turbo = false
-      json_at = -1
-      html_at = -1
-      position = 0
-      accept.split(",").each do |entry|
-        parts = entry.split(";")
-        next if parts.empty?
-
-        media = parts[0].to_s.strip.downcase
-        next if Request.entry_quality(parts) == 0
-
-        turbo = true if media == "text/vnd.turbo-stream.html"
-        json_at = position if media == "application/json" && json_at < 0
-        html_at = position if media == "text/html" && html_at < 0
-        position += 1
-      end
-      return :turbo_stream if turbo
-      return :json if json_at >= 0 && (html_at < 0 || html_at > json_at)
-
-      :html
     end
 
     # The most bytes of `Accept-Language` {#negotiate_locale} reads.
@@ -276,7 +210,7 @@ module SpinelHttp
     # that is not one (so the entry is dropped): `0` or `1` with at most
     # three decimals, no more than 1.
     def self.quality_thousandths(value)
-      q = value.to_s
+      q = value.to_s # NOTES.md rule 3
       return -1 if q.empty? || q.bytesize > 5
 
       whole = q.getbyte(0)
@@ -319,74 +253,6 @@ module SpinelHttp
         return candidate if candidate.to_s.downcase == language
       end
       nil
-    end
-
-    # The registered format of an extension, Rails' MIME table (`"json"` ->
-    # `:json`, `"jpg"` -> `:jpeg`, `"txt"` -> `:text`), `:unknown` for any
-    # other: a fixed table, so request input never becomes a new Symbol.
-    # @param ext [String] without the dot, as written (case matters)
-    # @return [Symbol]
-    # @api public
-    def self.format_for_extension(ext)
-      case ext
-      when "html", "htm" then :html
-      when "text", "txt" then :text
-      when "js" then :js
-      when "css" then :css
-      when "ics" then :ics
-      when "csv" then :csv
-      when "vcf" then :vcf
-      when "vtt" then :vtt
-      when "png" then :png
-      when "jpeg", "jpg" then :jpeg
-      when "gif" then :gif
-      when "bmp" then :bmp
-      when "tiff" then :tiff
-      when "svg" then :svg
-      when "webp" then :webp
-      when "mpeg" then :mpeg
-      when "mp3" then :mp3
-      when "ogg" then :ogg
-      when "m4a" then :m4a
-      when "webm" then :webm
-      when "mp4" then :mp4
-      when "otf" then :otf
-      when "ttf" then :ttf
-      when "woff" then :woff
-      when "woff2" then :woff2
-      when "xml" then :xml
-      when "rss" then :rss
-      when "atom" then :atom
-      when "yaml" then :yaml
-      when "multipart_form" then :multipart_form
-      when "url_encoded_form" then :url_encoded_form
-      when "json" then :json
-      when "pdf" then :pdf
-      when "zip" then :zip
-      when "gzip" then :gzip
-      when "turbo_stream" then :turbo_stream
-      else :unknown
-      end
-    end
-
-    # The Content-Type a response in `format` is sent with (`:json` ->
-    # `"application/json; charset=utf-8"`); `"application/octet-stream"`
-    # for a format without a text type here.
-    # @param format [Symbol]
-    # @return [String]
-    # @api public
-    def self.mime_type(format)
-      case format
-      when :html then "text/html; charset=utf-8"
-      when :json then "application/json; charset=utf-8"
-      when :turbo_stream then "text/vnd.turbo-stream.html; charset=utf-8"
-      when :csv then "text/csv; charset=utf-8"
-      when :xml then "application/xml; charset=utf-8"
-      when :text then "text/plain; charset=utf-8"
-      when :js then "text/javascript; charset=utf-8"
-      when :css then "text/css; charset=utf-8"
-      else "application/octet-stream"
-      end
     end
 
     # For a method override: turns a POST form into PATCH/PUT/DELETE.
@@ -474,9 +340,9 @@ module SpinelHttp
 
     # The parser behind #header_params; a byte scan, so any bytes are
     # tolerated (`s` is a `to_s` local, a String whatever was passed). The
-    # Hash is seeded with its types.
+    # Hash is seeded with its types (NOTES.md rules 3, 5 and 7).
     def self.parse_header_params(value)
-      s = value.to_s
+      s = value.to_s # NOTES.md rule 3
       out = { "" => "" }
       out.delete("")
       n = s.bytesize
@@ -524,7 +390,7 @@ module SpinelHttp
     # followed by at least one blank and then a byte that is neither `=`,
     # `,` nor `;`. `from` itself when there is none.
     def self.scheme_end(text, from)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       n = s.bytesize
       stop = from
       stop += 1 while stop < n && Request.token_byte?(s.getbyte(stop))
@@ -540,7 +406,7 @@ module SpinelHttp
     end
 
     def self.skip_blanks(text, from)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       i = from
       n = s.bytesize
       i += 1 while i < n && Request.blank_byte?(s.getbyte(i))
@@ -549,7 +415,7 @@ module SpinelHttp
 
     # The offset of the next `,` or `;` at or after `from`, or the end.
     def self.next_separator(text, from)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       i = from
       n = s.bytesize
       while i < n
@@ -565,7 +431,7 @@ module SpinelHttp
     # `from` (a backslash escapes the next byte), or the end of the text
     # when it is unterminated.
     def self.quoted_end(text, from)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       i = from
       n = s.bytesize
       while i < n
@@ -579,9 +445,9 @@ module SpinelHttp
 
     # The contents of a quoted string, bytes [from, stop), with each
     # backslash escape replaced by the byte it escapes. Copied in chunks
-    # into a +"" buffer filled with << only.
+    # into a +"" buffer filled with << only (NOTES.md rule 8).
     def self.unquote(text, from, stop)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       last = stop > s.bytesize ? s.bytesize : stop
       out = +""
       chunk = from
@@ -616,7 +482,7 @@ module SpinelHttp
     # 0 when the header is absent or not a plain non-negative integer. A
     # value of more than 18 digits is reported as 9223372036854775807
     # without parsing it (Spinel's `String#to_i` raises RangeError past
-    # 2**63-1; CRuby would return a Bignum): the Server's 413
+    # 2**63-1, NOTES.md rule 10; CRuby would return a Bignum): the Server's 413
     # limit rejects it either way.
     # @return [Integer]
     # @api public
@@ -731,7 +597,7 @@ module SpinelHttp
     # @return [Integer]
     # @api public
     def self.parse_http_date(text)
-      s = text.to_s # the byte scans read a fresh local, a String
+      s = text.to_s # NOTES.md rule 3
       return -1 unless s.bytesize == 29 && s.getbyte(3) == 44 && s.getbyte(4) == 32 && s.getbyte(7) == 32 &&
                        s.getbyte(11) == 32 && s.getbyte(16) == 32 && s.getbyte(19) == 58 && s.getbyte(22) == 58 &&
                        s.getbyte(25) == 32 && s.byteslice(25, 4) == " GMT"
@@ -771,7 +637,7 @@ module SpinelHttp
     # one is not a digit.
     # @api private
     def self.http_digits(text, from, len)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       n = 0
       i = 0
       while i < len
@@ -792,9 +658,9 @@ module SpinelHttp
     # trailer at all); the inflater measures the real output as it goes.
     # `body` can be boxed (a caller's nullable or polymorphic body), and a
     # boxed `getbyte` raises NoMethodError in a program that requires the
-    # openssl package: read it through `to_s`.
+    # openssl package: read it through `to_s` (NOTES.md rule 3).
     def self.gunzip(body, limit)
-      data = body.to_s
+      data = body.to_s # NOTES.md rule 3
       if data.bytesize < GZIP_MIN_BYTES || data.getbyte(0) != 0x1f || data.getbyte(1) != 0x8b || data.getbyte(2) != 8
         raise BodyUndecodable, "request body is not gzip data"
       end
@@ -808,7 +674,8 @@ module SpinelHttp
     # GzipFFI (system zlib through Spinel FFI), which cannot be loaded here
     # (CRuby loads this file too, and Spinel's FFI DSL exists only under
     # Spinel), so {GzipFFI.install!} installs it; hence the default's
-    # message. A module-level ivar with a lambda default.
+    # message. A module-level ivar with a lambda default, passed positionally
+    # (NOTES.md rules 4 and 13).
     @inflater = ->(data, limit) { raise BodyUndecodable, "gzip request bodies are not decoded: no inflater is installed (require the gzip support)" }
 
     def self.inflater
@@ -908,7 +775,7 @@ module SpinelHttp
     # before routing and a router that fills the params share the one
     # result). Callers
     # check #multipart? first. The ivar starts as nil and is assigned from a
-    # method's result; a raise is not cached, so every later
+    # method's result (NOTES.md rule 5); a raise is not cached, so every later
     # call raises again and the request still ends as that 400.
     #
     # A multipart body with a Content-Encoding is refused: the parser works on
@@ -946,7 +813,7 @@ module SpinelHttp
     # that is already UTF-8 (every one under Spinel) it is the field itself;
     # for a binary CRuby socket buffer it is one copy. A raise is not cached:
     # every call raises again and the request still ends as that 400. The ivar
-    # starts as nil and is assigned from a method's result.
+    # starts as nil and is assigned from a method's result (NOTES.md rule 5).
     # (A blank line ends this comment: the API reference shows the next one.)
 
     # The query string as valid UTF-8 text, still percent-encoded: the text to
@@ -1024,7 +891,7 @@ module SpinelHttp
     # The returned Array is the cached one, shared by every reader: callers
     # must not mutate it, nor the Strings in it; one that needs to change
     # either dups it. The ivar starts as nil and is assigned from a method's
-    # result.
+    # result (NOTES.md rule 5).
     def path_segments
       cached = @path_segments_cache
       return cached unless cached.nil?
@@ -1041,21 +908,22 @@ module SpinelHttp
     # 400, as Rails answers for an invalid path encoding), also in a segment
     # that is never decoded. Doing it on the whole path before `split` also
     # keeps `split` itself safe: CRuby's raises ArgumentError on a broken
-    # UTF-8-tagged String (Spinel's accepts it). A segment with a malformed
-    # escape ("%ZZ", a trailing "%" or "%2") is kept literal: CRuby's decoder
-    # raises ArgumentError on it while Spinel's silently yields a NUL byte, so
-    # neither runtime ever sees it. That policy is why the escapes are scanned
-    # twice here (Query.valid_escapes?, then the decoding loop): the loop
-    # raises QueryMalformed on a malformed escape, which is right for a query
-    # string (Query.decode does not pre-scan) but would turn a path like
-    # "/50%off" into a 400 instead of a 404 by non-match. The decoding is the
-    # byte-chunked loop of query strings with "+" left alone:
-    # URI.decode_www_form_component on a whole segment is quadratic on
-    # non-ASCII text under Spinel, and a static-file server may route every
-    # GET/HEAD through the segments, anonymous requests included, so a ~60 KB
-    # segment (inside the 64 KB head limit) holding one non-ASCII byte and one
-    # "%41" costs ~0.5 s of CPU per request. Passing false for the plus flag
-    # keeps "+" literal without a `gsub("+", "%2B")` pass over the segment.
+    # UTF-8-tagged String (Spinel's accepts it; NOTES.md rule 7). A segment
+    # with a malformed escape ("%ZZ", a trailing "%" or "%2") is kept literal:
+    # CRuby's decoder raises ArgumentError on it while Spinel's silently
+    # yields a NUL byte, so neither runtime ever sees it. That policy is why
+    # the escapes are scanned twice here (Query.valid_escapes?, then the
+    # decoding loop): the loop raises QueryMalformed on a malformed escape,
+    # which is right for a query string (Query.decode does not pre-scan) but
+    # would turn a path like "/50%off" into a 400 instead of a 404 by
+    # non-match. The decoding is the byte-chunked loop of query strings with
+    # "+" left alone: URI.decode_www_form_component on a whole segment is
+    # quadratic on non-ASCII text under Spinel (NOTES.md rule 9), and a
+    # static-file server may route every GET/HEAD through the segments,
+    # anonymous requests included, so a ~60 KB segment (inside the 64 KB head
+    # limit) holding one non-ASCII byte and one "%41" costs ~0.5 s of CPU per
+    # request. Passing false for the plus flag keeps "+" literal without a
+    # `gsub("+", "%2B")` pass over the segment.
     #
     # Per segment holding a "%", the same on both runtimes:
     #   (i)  Query.valid_escapes?(seg) false -> the segment stays literal;
@@ -1089,7 +957,8 @@ module SpinelHttp
     end
 
     # Whether {#client_ip} may read X-Forwarded-For, `false`: a module-level
-    # ivar with a literal default, the Params.max_page shape. An application
+    # ivar with a literal default, the Params.max_page shape (NOTES.md rule 4).
+    # An application
     # installs its setting here at boot, since the HTTP layer reads no
     # configuration of its own.
     @trusted_proxy = false
@@ -1113,7 +982,8 @@ module SpinelHttp
 
 # The proxies {#client_ip} trusts besides loopback: their entries as
 # given, and parsed (IpAddress.parse_network results end to end). Empty
-# until an application installs its list at boot; typed seeds.
+# until an application installs its list at boot; typed seeds (NOTES.md
+# rule 5).
 @trusted_proxy_entries = Array.new(0) { "" }
 @trusted_networks = Array.new(0) { 0 }
 
@@ -1218,10 +1088,10 @@ end
     # and tabs around it removed, or "" when it is empty, longer than
     # MAX_FORWARDED_HOP_BYTES or holds a byte outside 0x21..0x7E. Byte scans
     # only: the header may hold any bytes, including invalid UTF-8, which
-    # CRuby's split/strip would raise on; read through a new local, a
-    # String (header values can be boxed).
+    # CRuby's split/strip would raise on (NOTES.md rule 7); read through a new
+    # local, a String (header values can be boxed: NOTES.md rule 3).
     def self.last_forwarded_hop(value)
-      s = value.to_s
+      s = value.to_s # NOTES.md rule 3
       stop = s.bytesize
       start = stop
       while start > 0 && s.getbyte(start - 1) != 44
@@ -1255,7 +1125,7 @@ end
     # IPv4-mapped ("::ffff:127.0.0.1", either case). A byte scan; "" (a
     # request built without an address) is not loopback.
     def self.loopback_address?(addr)
-      s = addr.to_s
+      s = addr.to_s # NOTES.md rule 3
       return true if s == "::1"
 
       from = Request.mapped_prefix?(s) ? 7 : 0

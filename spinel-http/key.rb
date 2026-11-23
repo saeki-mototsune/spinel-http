@@ -2,12 +2,12 @@
 # (`params[:id]` and `params["id"]` read the same entry), without leaking
 # memory under Spinel.
 #
-# Under Spinel, `Symbol#to_s` answers a new frozen String at every call,
-# and a frozen heap String is immortal there (the collector pins it, as it
-# pins a literal): every `sym.to_s` on a request path kept about 110 bytes
-# for the life of the process. `Symbol#name` answers one frozen String per
-# Symbol, made at its first call and the same object afterwards, under
-# CRuby as under Spinel.
+# Under Spinel, `Symbol#to_s` answers a new frozen String at every call, and a
+# frozen heap String is immortal there (the collector pins it, as it pins a
+# literal): every `sym.to_s` on a request path kept about 110 bytes for the
+# life of the process (NOTES.md rule 17). `Symbol#name` answers one frozen
+# String per Symbol, made at its first call and the same object afterwards,
+# under CRuby as under Spinel.
 #
 # So a method that takes a key as a String or a Symbol reads it with
 # Key.string_of(key), never key.to_s. The answer is frozen for a Symbol

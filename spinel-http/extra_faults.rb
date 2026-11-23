@@ -10,7 +10,8 @@ module SpinelHttp
     # the library that defines the class, at load (a framework's
     # missing-required-parameter error, say); a program that never loads
     # that library never raises the class. A module-level ivar with a
-    # literal default (the Params.max_page shape), so Spinel types the slot.
+    # literal default (the Params.max_page shape), so Spinel types the slot
+    # (NOTES.md rule 4).
     @extra_faults = Array.new(0) { "" }
 
     # The client faults registered on top of CLIENT_FAULTS, empty until a

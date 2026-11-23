@@ -38,7 +38,8 @@ module SpinelHttp
         out << "\n"
       end
       # Returned and appended, never filled through a parameter: a buffer
-      # appended to directly loses what helpers append to it under Spinel.
+      # appended to directly loses what helpers append to it under Spinel
+      # (NOTES.md rule 8).
       out << SSE.data_lines(data.to_s)
       out << "\n"
       out
@@ -63,7 +64,8 @@ module SpinelHttp
       nil
     end
 
-    # `data: <line>\n` for every line of text; byte offsets throughout.
+    # `data: <line>\n` for every line of text; byte offsets throughout
+    # (NOTES.md rule 7).
     def self.data_lines(text)
       out = +""
       n = text.bytesize

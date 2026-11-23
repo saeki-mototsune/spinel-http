@@ -21,15 +21,16 @@ module SpinelHttp
   #   response.add_cookie(SpinelHttp::Cookies.serialize("theme", "", max_age: 0))   # delete
   # @api public
   module Cookies
-    # Query.decode, falling back to the raw text when it raises QueryMalformed:
-    # a malformed escape or an invalid UTF-8 byte sequence (raw, or "%81"),
-    # on both runtimes (Query.decode goes through decode_escapes, which
-    # validates the text as UTF-8 first (Query.utf8!) and then decodes it
-    # itself, so the answer depends neither on what the library decoder does
-    # with a malformed escape nor on CRuby's byteindex, which
-    # raises IndexError on such text). The raw value is kept on
-    # QueryMalformed, never the half-decoded one. A plain non-yielding
-    # method with one rescue clause by class: fine under Spinel.
+    # Query.decode, falling back to the raw text when it raises
+    # QueryMalformed: a malformed escape or an invalid UTF-8 byte sequence
+    # (raw, or "%81"), on both runtimes (Query.decode goes through
+    # decode_escapes, which validates the text as UTF-8 first (Query.utf8!)
+    # and then decodes it itself, so the answer depends neither on what the
+    # library decoder does with a malformed escape (NOTES.md rule 9) nor on
+    # CRuby's byteindex, which raises IndexError on such text (NOTES.md rule
+    # 7)). The raw value is kept on QueryMalformed, never the half-decoded
+    # one. A plain non-yielding method with one rescue clause by class: fine
+    # under Spinel (NOTES.md rules 11 and 12).
     def self.decode(value)
       # Nothing to decode (session, signed and encrypted cookies are
       # usually base64url, "-", "_" and hex):
@@ -74,7 +75,7 @@ module SpinelHttp
     # @return [Boolean]
     # @api public
     def self.token?(name)
-      text = name.to_s # a fresh local for the byte reads
+      text = name.to_s # NOTES.md rule 3
       return false if text.empty?
 
       i = 0
@@ -108,7 +109,7 @@ module SpinelHttp
     end
 
     def self.check_attribute!(label, value)
-      text = value.to_s
+      text = value.to_s # NOTES.md rule 3
       return nil unless text.include?(";") || text.include?("\r") || text.include?("\n")
 
       message = "cookie #{label} must not contain ';', CR or LF"
@@ -130,7 +131,7 @@ module SpinelHttp
     # {serialize}'s default `expires:`, standing for "no Expires". Not nil:
     # under Spinel a parameter defaulting to nil that some caller gives a
     # plain Time is compiled as a Time, its `nil?` as false, and the
-    # default call then reads a NULL Time and crashes.
+    # default call then reads a NULL Time and crashes (NOTES.md rule 5).
     NO_EXPIRES = Time.at(NO_EXPIRES_EPOCH).utc
 
     # A Set-Cookie value for {Response#add_cookie}, the value

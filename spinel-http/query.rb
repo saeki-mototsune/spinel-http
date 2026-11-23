@@ -34,21 +34,21 @@ module SpinelHttp
   class QueryTooMany < QueryLimitExceeded
   end
 
-  # Request text that does not decode: a percent-escape ("%zz", a lone "%")
-  # or an invalid UTF-8 byte sequence ("\x81", or "%81" once decoded) in a
-  # query string or form body (Cookies keep such a value raw instead).
-  # Query finds the escape with its own byte scanner, not the decoder's
-  # ArgumentError (Spinel 2026.09.12 decoded it leniently, to a NUL byte;
-  # later builds raise), and the bytes with String#valid_encoding? on the text
-  # read as UTF-8 whatever the String's tag (Query.utf8!), so
-  # both are raised the same way on both runtimes. That includes a raw byte
-  # and an escape that would only together make one character
+  # Request text that does not decode: a percent-escape ("%zz", a lone "%") or
+  # an invalid UTF-8 byte sequence ("\x81", or "%81" once decoded) in a query
+  # string or form body (Cookies keep such a value raw instead). Query finds
+  # the escape with its own byte scanner, not the decoder's ArgumentError
+  # (Spinel 2026.09.12 decoded it leniently, to a NUL byte; later builds
+  # raise; NOTES.md rule 9), and the bytes with String#valid_encoding? on the
+  # text read as UTF-8 whatever the String's tag (Query.utf8!, NOTES.md rule
+  # 7), so both are raised the same way on both runtimes. That includes a raw
+  # byte and an escape that would only together make one character
   # ("a=\xC3%A9"): a client never sends half a character raw, and a binary
   # CRuby socket buffer answers 400 like Spinel's UTF-8 String does. A
   # StandardError under QueryInvalid, NOT an ArgumentError (the class CRuby's
   # decoder raises): app code that rescues around Query.parse or Query.decode
-  # rescues SpinelHttp::QueryInvalid. An
-  # ArgumentError superclass for a user class is unverified under Spinel.
+  # rescues SpinelHttp::QueryInvalid. An ArgumentError superclass for a user
+  # class is unverified under Spinel.
   class QueryMalformed < QueryInvalid
   end
 
@@ -76,12 +76,12 @@ module SpinelHttp
     # CRuby for a 10 MB body). So the offsets here are bytes: byteindex,
     # byteslice and bytesize are O(1) to position and O(segment) to cut, and
     # Server#serve already frames its socket buffer with them under Spinel
-    # (which indexes Strings by character). Every offset is 0 or just after an
-    # ASCII "&", so it is always on a character boundary and a multibyte value
-    # is never split. `str` may be ASCII-8BIT (a socket buffer under CRuby) or
-    # UTF-8 (Spinel); the byte methods give the same answers on both. add_pair
-    # then works on one segment only, so the whole parse is O(body) +
-    # O(MAX_PAIRS).
+    # (which indexes Strings by character: NOTES.md rule 7). Every offset is 0
+    # or just after an ASCII "&", so it is always on a character boundary and
+    # a multibyte value is never split. `str` may be ASCII-8BIT (a socket
+    # buffer under CRuby) or UTF-8 (Spinel); the byte methods give the same
+    # answers on both. add_pair then works on one segment only, so the whole
+    # parse is O(body) + O(MAX_PAIRS).
     #
     # "Always on a character boundary" holds only for a String that is valid
     # in its encoding: after an invalid byte ("a=1&\x81b=2") CRuby's
@@ -91,7 +91,7 @@ module SpinelHttp
     # returns the match. So the text is validated ONCE, first thing, as UTF-8
     # whatever its tag (utf8!), and an invalid byte sequence is QueryMalformed
     # (Rails: BadRequest). There is no `rescue IndexError` on purpose: it
-    # would be CRuby-only behaviour. A binary (ASCII-8BIT)
+    # would be CRuby-only behaviour (NOTES.md rule 7). A binary (ASCII-8BIT)
     # CRuby socket buffer is read as UTF-8 too (one copy of the text), so it
     # answers like Spinel's UTF-8 String. The segments cut out below inherit
     # the valid encoding, so add_pair and the decoder do not check them again.
@@ -105,18 +105,19 @@ module SpinelHttp
     # trusts its text to be what utf8! answered (parse_valid, value_of_valid):
     # Request validates each field once (utf8_body, utf8_query_string) and
     # hands that text to all its readers. So a form POST validates its body
-    # ONCE, at its first read, not once per reader (a method override, a
-    # CSRF check and a router's parse would each scan it: three times,
-    # O(body) each, before any auth check). A router can build one tree with
+    # ONCE, at its first read, not once per reader (a method override, a CSRF
+    # check and a router's parse would each scan it: three times, O(body)
+    # each, before any auth check). A router can build one tree with
     # parse_valid, query string first, then the form body, so a later source
-    # wins and nothing is copied node by node afterwards. Each
-    # limit applies per call: a form body and a query string are two calls of
-    # MAX_PAIRS each. The cursor loop is written out in parse_valid and in
+    # wins and nothing is copied node by node afterwards. Each limit applies
+    # per call: a form body and a query string are two calls of MAX_PAIRS
+    # each. The cursor loop is written out in parse_valid and in
     # value_of_valid rather than factored into a helper that yields each
     # segment: under Spinel a yielding helper called from nested blocks is a
-    # hazard (the raises below must stay plain raises), and the loop is a
-    # dozen lines; Array-free on purpose too (no `split`, see above).
-    # (A blank line ends this comment: the API reference shows the next one.)
+    # hazard (NOTES.md rule 11; the raises below must stay plain raises), and
+    # the loop is a dozen lines; Array-free on purpose too (no `split`, see
+    # above). (A blank line ends this comment: the API reference shows the
+    # next one.)
 
     # Parses a query string or an `application/x-www-form-urlencoded` body
     # into a new {Params}. `+` and percent-escapes are decoded, `a[b]=1` nests,
@@ -183,7 +184,7 @@ module SpinelHttp
     # a[b][c]... key costs one byteindex. The value is decoded (decode_valid)
     # only for a matching segment, so a malformed escape in the value of
     # another key is not looked at here (parse would raise on it). Always a
-    # String.
+    # String (NOTES.md rules 5 and 6).
     def self.value_of(str, name)
       value_of_valid(utf8!(str.to_s), name)
     end
@@ -226,17 +227,17 @@ module SpinelHttp
     # are refused by the decoding loop itself, with one clear message and the
     # same behaviour on both runtimes, whatever the library decoder does with
     # one (Spinel 2026.09.12's never raised and put NUL bytes into params
-    # where CRuby's raised); there is no pre-scan (valid_escapes? is
-    # Request.split_path's check, for its own policy). There is no rescue
-    # around the library decoder either: the loop hands it only runs of
-    # well-formed "%XX", which it never refuses.
+    # where CRuby's raised; NOTES.md rule 9); there is no pre-scan
+    # (valid_escapes? is Request.split_path's check, for its own policy).
+    # There is no rescue around the library decoder either: the loop hands it
+    # only runs of well-formed "%XX", which it never refuses.
     #
     # The library decoder is never handed the whole text: under Spinel
     # URI.decode_www_form_component is quadratic on a String that holds a
     # non-ASCII character (e-acute + 50 000 "a" took 517 ms, + 100 000 2.4 s,
     # + 200 000 8.5 s; 400 000 "a" + "%41%C3%A9", which is ASCII up to the
-    # escapes, 11 ms; linear under CRuby), so one 1.6 MB non-ASCII key or
-    # form value hung the binary for minutes. It is decoded
+    # escapes, 11 ms; linear under CRuby; NOTES.md rule 9), so one 1.6 MB
+    # non-ASCII key or form value hung the binary for minutes. It is decoded
     # by byte chunks in decode_valid (below), shared with Request.split_path.
     def self.decode(text)
       decode_escapes(text, true)
@@ -248,7 +249,7 @@ module SpinelHttp
     # decode_valid).
     # An invalid byte sequence is QueryMalformed before any byte offset is
     # used, because those offsets are only character boundaries in a valid
-    # String (see parse). With plus_is_space a "+" is a space
+    # String (see parse, NOTES.md rule 7). With plus_is_space a "+" is a space
     # (query strings, forms, cookies); without it a "+" stays a plus (a path
     # segment). A malformed escape is QueryMalformed too (decode_valid).
     def self.decode_escapes(text, plus_is_space)
@@ -265,7 +266,7 @@ module SpinelHttp
     # is raised right there. The RESULT is checked once, at the end: a
     # percent-encoded invalid sequence ("%81", "%C3") decodes to bytes that
     # are not UTF-8. Two entry points over one loop (decode_escapes,
-    # add_pair), and no block, so it is a plain method.
+    # add_pair), and no block, so it is a plain method (NOTES.md rule 11).
     #
     # The stretches between the specials are copied with byteslice, the
     # decoder sees only each maximal run of consecutive "%XX" escapes, which
@@ -275,15 +276,15 @@ module SpinelHttp
     # more library String op that nothing has measured on a 10 MB non-ASCII
     # value under Spinel (does a String-pattern gsub scan by character
     # offset? character offsets and the quadratic decoder are why the rest
-    # of this loop does not ask). Text
+    # of this loop does not ask: NOTES.md rules 7 and 9). Text
     # with neither special is copied whole by the final append.
-    # Offsets are bytes, as in parse and split_key: each is a
+    # Offsets are bytes, as in parse and split_key (NOTES.md rule 7): each is a
     # "%", a "+", or just after two hex digits of an escape that was checked
     # here, so always on a character boundary of a valid String. The next "%"
     # and the next "+" are each searched for once per use (a run holds only
     # "%" and hex digits, so the cached "+" offset is never behind `pos` after
     # it), so the whole decode is O(bytes). -1 means none, a typed sentinel
-    # rather than nil.
+    # rather than nil (NOTES.md rule 5).
     def self.decode_valid(text, plus_is_space)
       pct = next_byte(text, "%", 0)
       plus = plus_is_space ? next_byte(text, "+", 0) : -1
@@ -304,7 +305,7 @@ module SpinelHttp
           # byteslice got a negative length, returned nil and the append
           # raised FrozenError; with fewer than two bytes left it consumed
           # nothing and looped forever on ("%4", false). A plain raise, no
-          # rescue.
+          # rescue (NOTES.md rule 11).
           raise QueryMalformed, "malformed percent-encoding in request parameters" if j < n && text.getbyte(j) == 37
           out << URI.decode_www_form_component(text.byteslice(pct, j - pct).to_s)
           pos = j
@@ -331,16 +332,17 @@ module SpinelHttp
     # never the caller's String retagged in place), so "a=\xC3%A9" is a 400
     # under CRuby as it is under Spinel, whose Strings are all UTF-8
     # (`encoding.to_s` is "UTF-8" for every one of them, so there it is the
-    # very same object; valid_encoding? agrees with CRuby). The
+    # very same object; valid_encoding? agrees with CRuby, NOTES.md rule 7). The
     # result is what the byte-offset scans take (parse_valid, value_of_valid,
     # decode_valid). A UTF-8 String is returned as it is, uncopied. A
     # Request's body or query string can arrive boxed (a caller passed a
     # nullable or polymorphic value); returning it unnarrowed would hand every
     # scan downstream a boxed receiver, whose `getbyte` raises NoMethodError
-    # in a program that requires the openssl package. `to_s` is the String
+    # in a program that requires the openssl package (NOTES.md rule 3). `to_s`
+    # is the String
     # itself, so nothing is copied.
     def self.utf8!(raw)
-      text = raw.to_s
+      text = raw.to_s # NOTES.md rule 3
       s = text.encoding.to_s == "UTF-8" ? text : text.dup.force_encoding("UTF-8")
       raise QueryMalformed, INVALID_BYTES unless s.valid_encoding?
 
@@ -348,14 +350,15 @@ module SpinelHttp
     end
 
     # The byte offset of the next `needle` (one ASCII character) at or after
-    # `from`, or -1: byteindex's nil as a typed Integer.
+    # `from`, or -1: byteindex's nil as a typed Integer (NOTES.md rule 5).
     def self.next_byte(text, needle, from)
       i = text.byteindex(needle, from)
       i.nil? ? -1 : i
     end
 
     # True when every "%" in `text` is followed by two hex digits. A byte
-    # scan, so it answers the same on CRuby and Spinel (the decoder does not)
+    # scan, so it answers the same on CRuby and Spinel (the decoder does not:
+    # NOTES.md rule 9)
     # and costs O(bytes); it jumps from one "%" to the next with
     # byteindex, so text without escapes is one C scan. Every offset it uses
     # is a "%" or just after two ASCII hex digits, so it is on a character
@@ -412,19 +415,19 @@ module SpinelHttp
     # One cursor loop that cuts each pair out as it validates it, so it runs
     # at most MAX_DEPTH + 1 times however long the key is, and allocates only
     # the (at most MAX_DEPTH + 1) parts. The offsets are bytes (getbyte,
-    # byteindex, byteslice, bytesize; parse does the same):
+    # byteindex, byteslice, bytesize; parse does the same, NOTES.md rule 7):
     # `key[pos]` and `key.index("]", pos)` take character offsets, which a
     # UTF-8 string resolves with an O(pos) scan once it holds one non-ASCII
     # character, so a key like e-acute + ("[" + 300 000 "a" + "]") * 32 cost
     # 0.47 s per parse, three times per request, for 32 pairs. Every "[" and
     # "]" is ASCII, so each offset is 0 or on one of them. The key is valid
     # UTF-8 (parse and decode_valid guarantee it; byteindex refuses an offset
-    # inside a character of an invalid String), so each such
+    # inside a character of an invalid String, NOTES.md rule 7), so each such
     # offset is a character boundary: a multibyte part is never split.
     def self.split_key(name)
-      # Through a `to_s` local: the key arrives boxed in a large program
-      # that also requires the openssl package, where `getbyte` on it
-      # raised NoMethodError.
+      # Through a `to_s` local (NOTES.md rule 3): the key arrives boxed in a
+      # large program that also requires the openssl package, where `getbyte`
+      # on it raised NoMethodError.
       key = name.to_s
       first_bracket = key.byteindex("[")
       return [key] if first_bracket.nil?
@@ -447,14 +450,14 @@ module SpinelHttp
     end
 
     # The query string `str` without its `name` parameters, re-encoded: each
-    # other pair is decoded and encoded again
-    # (URI.encode_www_form_component, so `post[tags][]` comes back as
-    # `post%5Btags%5D%5B%5D`), in its original order; a pair whose key is
-    # `name` or `name[...]` is dropped, empty segments go, and a bare `flag`
-    # comes back as `flag=` (the same parameter). "" when nothing is left.
-    # For links that keep the current query but change one parameter (a
-    # pagination helper's `page`). The same scan and limits as parse: utf8! first,
-    # QueryMalformed and QueryTooMany as there.
+    # other pair is decoded and encoded again (URI.encode_www_form_component,
+    # so `post[tags][]` comes back as `post%5Btags%5D%5B%5D`), in its original
+    # order; a pair whose key is `name` or `name[...]` is dropped, empty
+    # segments go, and a bare `flag` comes back as `flag=` (the same
+    # parameter). "" when nothing is left. For links that keep the current
+    # query but change one parameter (a pagination helper's `page`). The same
+    # scan and limits as parse: utf8! first, QueryMalformed and QueryTooMany
+    # as there.
     # @example
     #   Query.without_key("q=a+b&page=3&tag[]=x", "page")  # => "q=a+b&tag%5B%5D=x"
     # @param str [String] a raw query string

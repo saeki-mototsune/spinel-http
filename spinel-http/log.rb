@@ -78,7 +78,8 @@ module SpinelHttp
     end
 
     # Makes `ctx` the thread's context and answers the one it replaces;
-    # whoever swaps one in swaps the answered one back in an `ensure`. The
+    # whoever swaps one in swaps the answered one back in an `ensure`
+    # (NOTES.md rule 16). The
     # base answers NONE and stores nothing.
     # @param ctx [HttpLogContext]
     # @return [HttpLogContext]
@@ -86,14 +87,14 @@ module SpinelHttp
       HttpLogContext::NONE
     end
 
-    # A module-level ivar with a literal default, never @@ (the
+    # A module-level ivar with a literal default, never @@ (NOTES.md rule 4; the
     # Params.max_page shape): the base until a subclass is installed at
     # load, before any thread starts.
     @installed_switch = HttpLogSwitch.new
 
     # The switch the Server reads and swaps through. Not `installed`:
     # GzipDecoder.installed answers a GzipDecoder, and under Spinel a method
-    # name has one return type program-wide.
+    # name has one return type program-wide (NOTES.md rule 6).
     # @return [HttpLogSwitch]
     def self.installed_switch
       @installed_switch

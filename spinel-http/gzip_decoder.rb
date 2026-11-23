@@ -11,7 +11,7 @@
 # One decoder object inflates one body: the installed one is a factory
 # ({#gzip_open}). A failure is a status ({#gzip_status}), never an
 # exception, so the client raises its own errors and names no class of the
-# inflater's file, which may not be in the program.
+# inflater's file, which may not be in the program (NOTES.md rule 18).
 module SpinelHttp
   # The gzip support an HTTP client calls ({GzipDecoder.installed}); this
   # base is the one without gzip. Only {#gzip_ready?} is for applications;
@@ -72,7 +72,8 @@ module SpinelHttp
       nil
     end
 
-    # A module-level ivar with a literal default, not a class variable.
+    # A module-level ivar with a literal default, not a class variable
+    # (NOTES.md rule 4).
     @installed = GzipDecoder.new
 
     # The decoder the HTTP client uses.

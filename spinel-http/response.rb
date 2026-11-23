@@ -118,7 +118,8 @@ module SpinelHttp
       @status = 200
       @body = ""
       # Seeded with a String pair, then emptied: a bare `{}`
-      # is a Hash of untyped keys, which hands every key to HeaderName boxed.
+      # is a Hash of untyped keys, which hands every key to HeaderName boxed
+      # (NOTES.md rules 3 and 5).
       @headers = { "" => "" }
       @headers.delete("")
       @cookies = []
@@ -234,13 +235,14 @@ module SpinelHttp
 
     # Removes the header of that name, whatever its case (every spelling
     # when several were stored); a missing one is not an error. Returns nil
-    # (under Spinel a method name has one return type program-wide). Edits
+    # (under Spinel a method name has one return type program-wide: NOTES.md
+    # rule 6). Edits
     # @headers in place: `headers` is a public reader, so a Hash a caller
     # took earlier must still be the live one afterwards. The
     # matching keys are collected first (never delete while iterating) and
     # removed with Hash#delete. `each_key`, not `keys.each`: where @headers
     # is boxed, `keys` dispatches over the program's own `keys` methods and
-    # not to Hash#keys.
+    # not to Hash#keys (NOTES.md rule 3).
     # @param name [String]
     # @return [nil]
     # @api public
@@ -298,7 +300,8 @@ module SpinelHttp
     # Raises ArgumentError (leaving the response untouched) when location
     # contains CR or LF, e.g. a percent-decoded return_to param. Returns nil:
     # a framework may define `redirect` elsewhere (a routes DSL, say), and
-    # under Spinel one name keeps one return type across the program.
+    # under Spinel one name keeps one return type across the program
+    # (NOTES.md rule 6).
     def redirect(location, status = 302)
       set_header("Location", location) # raises on CR/LF: the stream stays
       @body_writer = nil

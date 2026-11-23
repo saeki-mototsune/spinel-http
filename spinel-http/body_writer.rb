@@ -6,7 +6,8 @@ module SpinelHttp
   # the head, then calls #write_body on the connection's thread with a
   # {Sink} on the socket, then ends the response and closes the connection.
   # A subclass overrides #write_body; the base is a class of its own, like
-  # {HttpHandler}, so Spinel resolves the call statically. Set one with
+  # {HttpHandler}, so Spinel resolves the call statically (NOTES.md rule 13).
+  # Set one with
   # {Response#body_writer=}.
   # @api public
   class BodyWriter
@@ -28,7 +29,8 @@ module SpinelHttp
     # through {HttpLogSwitch.installed_switch}, and puts the thread's own back
     # after it, also when it raises: a streamed body or an upgraded
     # connection is written after the handler that made the context has
-    # returned. Save, work, restore in `ensure`; no rescue here. For a
+    # returned. Save, work, restore in `ensure`; no rescue here (NOTES.md rule
+    # 16). For a
     # caller that writes a body itself (a test client, say); the Server does
     # the same around its rescuing run_writer.
     # @param writer [BodyWriter]
@@ -47,7 +49,7 @@ module SpinelHttp
 
   # A BodyWriter that runs a block (what a framework's `stream do |sink|`
   # would build). The block is stored and called with `.call` from this
-  # plain method, never yielded to.
+  # plain method, never yielded to (NOTES.md rule 11).
   class BlockWriter < BodyWriter
     def initialize(writer_block)
       @writer_block = writer_block
@@ -85,7 +87,7 @@ module SpinelHttp
 
     # The connection's socket, for a writer that speaks its own protocol on
     # it (a WebSocket session after a 101). Every read on it must be
-    # preceded by `wait_readable`.
+    # preceded by `wait_readable` (NOTES.md rule 14).
     # @return [TCPSocket]
     # @api public
     def socket
@@ -101,8 +103,8 @@ module SpinelHttp
       return nil if @closed
 
       # A new local (a String, whatever reached the parameter); appended
-      # with << so bytes after a NUL survive.
-      data = bytes.to_s
+      # with << so bytes after a NUL survive (NOTES.md rule 8).
+      data = bytes.to_s # NOTES.md rule 3
       n = data.bytesize
       return nil if n == 0
 
@@ -128,7 +130,8 @@ module SpinelHttp
 
     # Waits up to `seconds` for the client to close its end; true if it did
     # (or already had). Anything else the client sends is read and dropped (an
-    # SSE client sends nothing). wait_readable before the read; 0 only looks.
+    # SSE client sends nothing). wait_readable before the read (NOTES.md rule
+    # 14); 0 only looks.
     # @param seconds [Numeric]
     # @return [Boolean]
     # @api public

@@ -12,7 +12,7 @@
 # results are only ever built by appending byteslices of the input or of a
 # literal table into a `+""` buffer: an offset is a byte whatever encoding
 # the String is tagged with (under Spinel some reads answer byte Strings
-# and others character Strings), and no
+# and others character Strings: NOTES.md rule 7), and no
 # regexp runs over text that can hold arbitrary bytes.
 require "digest"
 
@@ -52,12 +52,12 @@ module SpinelHttp
       @original_filename = name
       @declared_content_type = declared
       @body_bytes = data
-      @detected = ""   # lazy; "" sentinel
+      @detected = ""   # lazy; "" sentinel (NOTES.md rule 5)
       @sha256 = ""     # lazy
     end
 
     # The sentinel for "no file": empty name, type and body. Params#upload
-    # style code compares with `empty?`, not nil.
+    # style code compares with `empty?`, not nil (NOTES.md rule 5).
     # @return [UploadedFile]
     # @api public
     def self.blank
@@ -84,7 +84,7 @@ module SpinelHttp
     end
 
     # The file's bytes, as an ASCII-8BIT String. Compare with `a.b == b.b`,
-    # `bytesize` or {#sha256_hex}, not `==` on the raw value.
+    # `bytesize` or {#sha256_hex}, not `==` on the raw value (NOTES.md rule 7).
     # @return [String]
     # @api public
     def body_bytes
@@ -172,7 +172,7 @@ module SpinelHttp
 
     # Whether `data` has the bytes of the ASCII/binary literal `want` at
     # `offset`. A byte loop: `==` on binary data is not reliable under
-    # Spinel. The caller has checked the length.
+    # Spinel (NOTES.md rule 7). The caller has checked the length.
     # @api private
     def self.bytes_at?(data, offset, want)
       i = 0
@@ -406,7 +406,7 @@ module SpinelHttp
     # @api public
     def self.content_disposition_utf8(disposition, filename)
       kind = disposition == "inline" ? "inline" : "attachment"
-      s = filename.to_s # a fresh local, a String, for the byte scans
+      s = filename.to_s # NOTES.md rule 3
       n = s.bytesize
       return kind if n == 0
 

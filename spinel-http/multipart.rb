@@ -16,8 +16,8 @@ module SpinelHttp
   class MultipartTooManyParts < QueryInvalid
   end
 
-  # A file part past {Multipart.max_upload_bytes}, or the text parts together past
-  # Multipart::MAX_TEXT_BYTES.
+  # A file part past {Multipart.max_upload_bytes}, or the text parts together
+  # past Multipart::MAX_TEXT_BYTES.
   # @api public
   class MultipartPartTooLarge < QueryInvalid
   end
@@ -112,12 +112,12 @@ module SpinelHttp
   # HTTP layer so Request can use it before routing: a CSRF check or a
   # method override reads its field from a multipart body too.
   #
-  # Every offset is a byte offset, and the whole parse runs
+  # Every offset is a byte offset (NOTES.md rule 7), and the whole parse runs
   # on ONE binary copy of the body (`body.b`), so CRuby's byteindex never
   # sees a UTF-8 String with a stray byte. File data is never compared with
   # `==`, interpolated, matched with a regexp or checked with
   # valid_encoding? (interpolating a String that holds a NUL truncates it
-  # under Spinel): it is cut out with byteslice after the size
+  # under Spinel: NOTES.md rule 8): it is cut out with byteslice after the size
   # gates, which look at offsets only. Scanning is linear: every search
   # resumes where the last one stopped, and a hit that is only a look-alike
   # ("--BOUNDARYX" inside file data) moves the cursor on by one byte.
@@ -148,7 +148,8 @@ module SpinelHttp
     DEFAULT_MAX_UPLOAD_BYTES = 5_242_880
     DEFAULT_MAX_PARTS = 128
 
-    # Module-level ivars with literal defaults, the Request.inflater shape;
+    # Module-level ivars with literal defaults, the Request.inflater shape
+    # (NOTES.md rule 4);
     # an application installs its limits at boot.
     @max_upload_bytes = DEFAULT_MAX_UPLOAD_BYTES
     @max_parts = DEFAULT_MAX_PARTS
@@ -522,8 +523,9 @@ module SpinelHttp
             value << header.byteslice(value_at, value_end - value_at)
             i += 1
           end
-          # to_s: `value` is a +"" buffer appended to in a loop; stored as it is
-          # it has no bytesize under Spinel 2026.09.12 (a growable buffer).
+          # to_s: `value` is a +"" buffer appended to in a loop; stored as it
+          # is it has no bytesize under Spinel 2026.09.12 (a growable buffer,
+          # NOTES.md rule 8).
           found << value.to_s if Multipart.ascii_ieq?(header, name_at, name_end - name_at, want)
         end
       end

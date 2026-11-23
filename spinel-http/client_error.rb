@@ -41,7 +41,8 @@ module SpinelHttp
     # chain was QueryTooMany, Object, BasicObject. Later builds answer as
     # CRuby does in small programs of both shapes for classes the program
     # defines, while `superclass` still raises NoMethodError on a package's
-    # exception class and, in a program that defines a module, on Ruby's own.
+    # exception class and, in a program that defines a module, on Ruby's own
+    # (NOTES.md rule 12).
     # The list stays until a change replaces it with a compiled test of these
     # error paths. A framework's own handlers can match by class name the same
     # way.
@@ -69,7 +70,7 @@ module SpinelHttp
     # and this runs inside error handlers' rescue clauses, where a
     # NoMethodError would escape and close the connection with no response
     # at all. Named status_for, not status: other classes in one program
-    # define `status` with other return types.
+    # define `status` with other return types (NOTES.md rule 6).
     # @param e [Exception]
     # @return [Integer] 400 or 500
     def self.status_for(e)
@@ -81,7 +82,7 @@ module SpinelHttp
     end
 
     # Whether name is one of names. A while loop, not a block: no closure,
-    # nothing to widen.
+    # nothing to widen (NOTES.md rule 11).
     # @param name [String]
     # @param names [Array<String>]
     # @return [Boolean]

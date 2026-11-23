@@ -73,7 +73,7 @@ module SpinelHttp
     # One open connection, as the drain sees it: its socket, and whether its
     # thread is waiting for the next request on it (idle). The flag is
     # written by the connection's own thread without a lock (no lock per
-    # request); the drain only reads it. A connection it
+    # request, NOTES.md rule 15); the drain only reads it. A connection it
     # misses is caught on its next pass, and one it reads late is harmless
     # because the drain shuts only the read side.
     class Connection
@@ -159,7 +159,8 @@ module SpinelHttp
       @accept_thread = nil
       # Connections accepted and not yet closed. Counted under @lock: with
       # SPINEL_WORKERS > 1 connection threads run in parallel. @lock is taken
-      # when a connection opens and closes, never per request.
+      # when a connection opens and closes, never per request (NOTES.md rule
+      # 15).
       @lock = Mutex.new
       @open_count = 0
       @connections = {}   # Connection#id => Connection, for the drain
@@ -171,7 +172,7 @@ module SpinelHttp
     # inherited listener is already bound and listening, and port stays the
     # configured one.
     def start
-      # One Spinel worker is faster for an I/O-bound server.
+      # One Spinel worker is faster for an I/O-bound server (NOTES.md rule 15).
       # It must be set before the first Thread.new starts the scheduler.
       ENV["SPINEL_WORKERS"] = "1" unless ENV["SPINEL_WORKERS"]
       listener = bind_listener
@@ -496,7 +497,8 @@ module SpinelHttp
     end
 
     # One accept of the sweep. Its own method so the rescue covers a single
-    # accept (it takes no block, so the rescue is a plain one under Spinel).
+    # accept (it takes no block, so the rescue is a plain one under Spinel:
+    # NOTES.md rule 11).
     def accept_queued_client(listener)
       spawn_connection(accept_client(listener))
       nil
@@ -513,7 +515,8 @@ module SpinelHttp
     end
 
     # The socket must reach the thread through this method's parameter,
-    # never as a Thread.new argument (under Spinel it would lose its type).
+    # never as a Thread.new argument (under Spinel it would lose its type:
+    # NOTES.md rule 14).
     # Counted here, on the accept thread, so that once #run has joined it
     # the drain sees every connection; serve's ensure uncounts it.
     def spawn_connection(sock)
@@ -527,7 +530,8 @@ module SpinelHttp
       spawn_serve(sock, conn)
     end
 
-    # A method of its own, so the block captures the two parameters.
+    # A method of its own, so the block captures the two parameters
+    # (NOTES.md rule 14).
     def spawn_serve(sock, conn)
       Thread.new { serve(sock, conn) }
     end
@@ -542,7 +546,7 @@ module SpinelHttp
 
     # One connection: read a head, read its body, run the app, write the
     # response, and loop while the client keeps the connection alive.
-    # Every readpartial is preceded by wait_readable; a nil
+    # Every readpartial is preceded by wait_readable (NOTES.md rule 14); a nil
     # wait means the client has been silent for read_timeout seconds.
     # Once the server is stopping, a connection idle between requests closes
     # (head_readable?) and a response ends the loop (respond answers
@@ -571,7 +575,7 @@ module SpinelHttp
         raise Rejected.new(400) if idx > @max_head_bytes
 
         head = HttpParser.parse_head(buf.byteslice(0, idx))
-        # Appended, not assigned: `rest` is appended to in the
+        # Appended, not assigned (NOTES.md rule 8): `rest` is appended to in the
         # body loop below, which makes Spinel compile it as a growable buffer,
         # and a String ASSIGNED to such a buffer is copied with strlen, so the
         # body was cut at its first NUL byte (every gzip upload has one) and
@@ -677,7 +681,8 @@ module SpinelHttp
     # {HttpLogSwitch.installed_switch}, so the writer's lines and the `stream
     # error:` line carry the request's id; this thread's own context is
     # back afterwards, also when the writer raised something run_writer
-    # does not rescue. Save, work, restore in `ensure`, no rescue.
+    # does not rescue. Save, work, restore in `ensure`, no rescue (NOTES.md
+    # rule 16).
     def run_writer_scoped(writer, sink, ctx)
       saved = HttpLogSwitch.installed_switch.swap_context(ctx)
       ok = run_writer(writer, sink)
@@ -698,7 +703,7 @@ module SpinelHttp
     end
 
     # The writer with its rescue, in a plain method (a rescue in a block is a
-    # hazard under Spinel). False when it raised.
+    # hazard under Spinel: NOTES.md rule 11). False when it raised.
     # Either arm logs the `stream error:` line; a failure is then told to
     # {SpinelHttp.stream_failure} (a no-op until a reporter is installed),
     # under the request's log context (run_writer_scoped). A client
@@ -745,7 +750,7 @@ module SpinelHttp
     # already put the thread's own context back when the exception gets
     # here, and the line must carry the request's id all the same. The
     # thread's context is back afterwards. Save, work, restore in
-    # `ensure`, no rescue.
+    # `ensure`, no rescue (NOTES.md rule 16).
     def classify_scoped(e, ctx)
       saved = HttpLogSwitch.installed_switch.swap_context(ctx)
       status = ClientError.classify(e, @logger)

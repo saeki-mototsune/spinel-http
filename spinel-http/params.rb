@@ -25,7 +25,7 @@ module SpinelHttp
       @lists = {}
       @children = {}
       # Seeded with a blank file and emptied so the Hash is typed
-      # String => UploadedFile.
+      # String => UploadedFile (NOTES.md rule 5).
       @uploads = { "" => UploadedFile.blank }
       @uploads.delete("")
     end
@@ -104,7 +104,8 @@ module SpinelHttp
     DEFAULT_MAX_PAGE = 10_000
 
     # The largest page number {#page_number} gives, `10000` by default. A
-    # module-level ivar with a literal default, the Multipart shape: an
+    # module-level ivar with a literal default, the Multipart shape (NOTES.md
+    # rule 4): an
     # application installs its own ceiling here at boot, since the HTTP
     # layer reads no configuration of its own.
     @max_page = DEFAULT_MAX_PAGE
@@ -127,7 +128,7 @@ module SpinelHttp
 
     # The most digits {Params.parse_int} reads: 18 stay below 2**63-1, past
     # which `String#to_i` raises RangeError under Spinel instead of
-    # promoting to a Bignum.
+    # promoting to a Bignum (NOTES.md rule 10).
     # @return [Integer]
     # @api public
     MAX_INT_DIGITS = 18
@@ -159,7 +160,8 @@ module SpinelHttp
     # @api public
     def page_number
       # The literal key, not int(:page, ...): one method fed Symbol and
-      # String keys in one program mis-dispatches its key.to_s.
+      # String keys in one program mis-dispatches its key.to_s (NOTES.md rule
+      # 17).
       Params.clamp_int(@values["page"], 1, 1, Params.max_page)
     end
 
@@ -167,7 +169,7 @@ module SpinelHttp
     def self.clamp_int(text, default, min, max)
       return default if text.nil?
 
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       return default unless Params.int_text?(s)
 
       n = s.to_i
@@ -179,14 +181,14 @@ module SpinelHttp
 
     # A decimal Integer from text, or default when text is not an optional
     # `-` and 1 to 18 ({MAX_INT_DIGITS}) ASCII digits. Never raises: the length
-    # is checked before `to_i`. Public, so that other text
+    # is checked before `to_i` (NOTES.md rule 10). Public, so that other text
     # (a setting, say) is read the same way.
     # @param text [String]
     # @param default [Integer]
     # @return [Integer]
     # @api public
     def self.parse_int(text, default)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       return default unless Params.int_text?(s)
 
       s.to_i
@@ -194,9 +196,10 @@ module SpinelHttp
 
     # True for an optional "-" and 1 to MAX_INT_DIGITS digits. A byte scan
     # through a fresh local: the text may arrive boxed, and a boxed
-    # `getbyte` raises NoMethodError in a program with the openssl package.
+    # `getbyte` raises NoMethodError in a program with the openssl package
+    # (NOTES.md rule 3).
     def self.int_text?(text)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       len = s.bytesize
       start = len > 0 && s.getbyte(0) == 45 ? 1 : 0 # "-"
       digits = len - start
@@ -311,8 +314,8 @@ module SpinelHttp
     #
     # Params has no `keys` method on purpose: it would share its name with
     # Hash#keys in a class whose own code (to_h, inspect) calls Hash#keys on
-    # its Hashes, a shape that mis-dispatches under Spinel. Ask key? for one
-    # name, or to_h / inspect for the whole level.
+    # its Hashes, a shape that mis-dispatches under Spinel (NOTES.md rule 3).
+    # Ask key? for one name, or to_h / inspect for the whole level.
     # @return [Hash{String => String}]
     # @api public
     def to_h

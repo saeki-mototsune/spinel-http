@@ -11,12 +11,12 @@ module SpinelHttp
   # them boxed, and in a program that requires the openssl package (whose
   # OpenSSL::Buffering defines getbyte) a `getbyte` on a boxed receiver
   # raises NoMethodError instead of reaching String#getbyte. For a String,
-  # `to_s` is the String itself: no copy.
+  # `to_s` is the String itself: no copy (NOTES.md rule 3).
   module HeaderName
     # name.downcase, without the copy when name has no ASCII capital and no
     # byte outside ASCII.
     def self.lower(header)
-      name = header.to_s
+      name = header.to_s # NOTES.md rule 3
       i = 0
       n = name.bytesize
       while i < n
@@ -29,7 +29,7 @@ module SpinelHttp
 
     # a.downcase == b.downcase.
     def self.same?(name_a, name_b)
-      a = name_a.to_s
+      a = name_a.to_s # NOTES.md rule 3
       b = name_b.to_s
       n = a.bytesize
       return a.downcase == b.downcase if n != b.bytesize && !(HeaderName.ascii?(a) && HeaderName.ascii?(b))
@@ -52,7 +52,7 @@ module SpinelHttp
     end
 
     def self.ascii?(text)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       i = 0
       n = s.bytesize
       while i < n

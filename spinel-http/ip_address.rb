@@ -7,7 +7,7 @@
 # Byte scans, no IPAddr (not in Spinel's library) and no Regexp. Every
 # parameter is read through a `to_s` local: a boxed value's `getbyte`
 # raises NoMethodError in a program that requires the openssl package
-# (see HeaderName).
+# (NOTES.md rule 3).
 module SpinelHttp
   module IpAddress
     # Integers in one parsed network: the prefix length, counted on the
@@ -18,7 +18,7 @@ module SpinelHttp
     # in its IPv4-mapped form (::ffff:a.b.c.d), or [] when it is neither.
     # A "%zone" suffix is dropped.
     def self.bytes16(text)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       v4 = IpAddress.parse_ipv4(s)
       return IpAddress.parse_ipv6(s) unless v4.size == 4
 
@@ -42,7 +42,7 @@ module SpinelHttp
     # one to three decimal digits; nothing else may follow it, and an entry
     # carries no "%zone".
     def self.parse_network(text)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       none = Array.new(0) { 0 }
       n = s.bytesize
       slash = -1
@@ -136,7 +136,7 @@ module SpinelHttp
     # not exactly four decimal parts of 0..255 (no leading zeros past one
     # digit, no other spellings: getaddrinfo answers the canonical form).
     def self.parse_ipv4(text)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       out = Array.new(0) { 0 }
       n = s.bytesize
       i = 0
@@ -168,7 +168,7 @@ module SpinelHttp
     # ("::ffff:10.0.0.1") and a "%zone" suffix, which is dropped (a zoned
     # address is link-local anyway).
     def self.parse_ipv6(text)
-      s = text.to_s
+      s = text.to_s # NOTES.md rule 3
       zone = s.byteindex("%")
       s = s.byteslice(0, zone) unless zone.nil?
       none = Array.new(0) { 0 }

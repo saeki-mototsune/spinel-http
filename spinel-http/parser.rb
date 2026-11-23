@@ -83,9 +83,9 @@ module SpinelHttp
     # Array and no block per request, as `bytes.all?` would cost. `value`
     # is a nullable header value, boxed, hence the `to_s` local: a boxed
     # `getbyte` raises NoMethodError in a program that requires the openssl
-    # package.
+    # package (NOTES.md rule 3).
     def self.digits?(value)
-      text = value.to_s
+      text = value.to_s # NOTES.md rule 3
       n = text.bytesize
       return false if n == 0
 

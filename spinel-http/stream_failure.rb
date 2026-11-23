@@ -10,7 +10,7 @@ module SpinelHttp
   # The HTTP layer names no error reporter: this base does nothing, and a
   # framework's error reporter installs a subclass that reports
   # ({SpinelHttp.stream_failure=}). An object with a method, not a stored
-  # block, so Spinel resolves the call statically.
+  # block, so Spinel resolves the call statically (NOTES.md rule 13).
   # @api private
   class StreamFailure
     # One writer's failure. The base does nothing. Must not raise.
@@ -23,7 +23,7 @@ module SpinelHttp
   end
 
   # A module-level instance variable with a literal default, so Spinel
-  # types the slot.
+  # types the slot (NOTES.md rule 4).
   @stream_failure = StreamFailure.new
 
   # Where the Server tells a streamed body's failure: the base, which does
