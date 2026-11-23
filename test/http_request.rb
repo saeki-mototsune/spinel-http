@@ -519,4 +519,86 @@ test "header_params tolerates any bytes in values" do
   assert binary.key?("n"), "the name ends at the first non-token byte"
 end
 
+def locale_request(value)
+  request_with({ "accept-language" => value })
+end
+
+test "negotiate_locale with q-values, regions, wildcards and junk" do
+  both = [:en, :ja]
+  # q-values order the choice: en (0.9) beats ja-JP (0.8) wherever they stand.
+  assert_equal :en, locale_request("ja-JP;q=0.8, en;q=0.9").negotiate_locale(both, :en)
+  assert_equal :ja, locale_request("ja-JP;q=0.8, en;q=0.7").negotiate_locale(both, :en)
+  assert_equal :ja, locale_request("en;q=0.1, ja;q=0.2").negotiate_locale(both, :en)
+  # equal q-values: the earlier entry wins
+  assert_equal :ja, locale_request("ja, en").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("en, ja").negotiate_locale(both, :ja)
+  # a region matches its language, any case; an underscore is a hyphen
+  assert_equal :ja, locale_request("ja-JP").negotiate_locale(both, :en)
+  assert_equal :ja, locale_request("JA-jp").negotiate_locale(both, :en)
+  assert_equal :ja, locale_request("ja_JP").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("en-GB,en;q=0.9").negotiate_locale(both, :ja)
+  # a full tag is tried before its language
+  assert_equal :"pt-BR", locale_request("pt-BR, pt;q=0.5").negotiate_locale([:pt, :"pt-BR", :en], :en)
+  assert_equal :pt, locale_request("pt-PT").negotiate_locale([:en, :pt, :"pt-BR"], :en)
+  assert_equal :"pt-BR", locale_request("pt_br, pt;q=0.5").negotiate_locale([:pt, :"pt-BR", :en], :en)
+  # a wildcard and unknown languages mean the default, whichever it is
+  assert_equal :en, locale_request("fr, *").negotiate_locale(both, :en)
+  assert_equal :ja, locale_request("*").negotiate_locale(both, :ja)
+  assert_equal :fr, locale_request("fr, de;q=0.8").negotiate_locale(both, :fr)
+  # q=0 excludes; a later entry still counts
+  assert_equal :en, locale_request("ja;q=0").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("ja;q=0.000").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("ja;q=0, en;q=0.1").negotiate_locale(both, :ja)
+  assert_equal :ja, locale_request("en;q=0, ja;q=0.1").negotiate_locale(both, :en)
+  # no header, an empty one, junk: the default, never nil
+  assert_equal :en, request_with({}).negotiate_locale(both, :en)
+  assert_equal :en, locale_request("").negotiate_locale(both, :en)
+  assert_equal :en, locale_request(";;;,,,=;q=").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("ja;q=abc").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("ja;q=1.5").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("ja;q=-1").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("ja;q=0.8888888").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("../ja, ja/../en").negotiate_locale(both, :en)
+  # nothing available: the default
+  assert_equal :en, locale_request("ja").negotiate_locale([], :en)
+end
+
+test "negotiate_locale reads at most 4 KB and 32 entries and never raises on bad text" do
+  both = [:en, :ja]
+  assert_equal :en, locale_request("," * 10_240).negotiate_locale(both, :en)
+  assert_equal :en, locale_request("x" * 10_240).negotiate_locale(both, :en)
+  # a match inside the first 32 entries counts; the 33rd entry does not
+  filler = "fr, " * 31
+  assert_equal :ja, locale_request("#{filler}ja").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("#{filler}fr, ja").negotiate_locale(both, :en)
+  # a match inside the first 4 KB counts; one past it does not
+  pad = "x" * 4000
+  assert_equal :ja, locale_request("#{pad},ja").negotiate_locale(both, :en)
+  assert_equal :en, locale_request("#{pad}#{" " * 200},ja").negotiate_locale(both, :en)
+  # an enormous q-value text is dropped, not parsed
+  assert_equal :en, locale_request("ja;q=#{"9" * 3000}").negotiate_locale(both, :en)
+  # text that is not valid UTF-8, or a character cut by the 4 KB limit
+  assert_equal :en, locale_request("\xff,ja".dup.force_encoding("UTF-8")).negotiate_locale(both, :en)
+  assert_equal :en, locale_request("ja,\xff".dup.force_encoding("UTF-8")).negotiate_locale(both, :en)
+  assert_equal :en, locale_request(("x" * 4095 + "\u00e9,ja").dup.force_encoding("UTF-8")).negotiate_locale(both, :en)
+  # valid multibyte text is only junk
+  assert_equal :ja, locale_request("\u00e9, ja").negotiate_locale(both, :en)
+end
+
+test "entry_quality reads an entry's q parameter in thousandths" do
+  assert_equal 1000, Request.entry_quality(["ja"])
+  assert_equal 800, Request.entry_quality(["ja", "q=0.8"])
+  assert_equal 800, Request.entry_quality(["ja", " Q = 0.8 "])
+  assert_equal 5, Request.entry_quality(["ja", "level=1", "q=0.005"])
+  # the last q wins; 0 refuses; text that is not a q-value is -1
+  assert_equal 0, Request.entry_quality(["ja", "q=0.5", "q=0"])
+  assert_equal 1000, Request.entry_quality(["ja", "q=1.000"])
+  assert_equal(-1, Request.entry_quality(["ja", "q=1.001"]))
+  assert_equal(-1, Request.entry_quality(["ja", "q="]))
+  assert_equal(-1, Request.entry_quality(["ja", "q=0.1234"]))
+  assert_equal 1000, Request.quality_thousandths("1")
+  assert_equal 0, Request.quality_thousandths("0")
+  assert_equal 120, Request.quality_thousandths("0.12")
+end
+
 SpinelHttpTest.summary

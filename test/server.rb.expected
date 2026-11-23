@@ -32,6 +32,13 @@ ok   parameters past Query's limits get 400, not 500, and the connection stays u
 ok   a JSON::NestingError in the app gets 500, the connection is closed and the server keeps serving
 ok   a JSON::ParserError in the app gets 500 and the server keeps serving
 ok   a header or cookie stored past set_header's CR/LF check gets 500, and nothing is injected
+ok   a streamed body is sent chunked under the request's context, and the terminator ends it
+ok   HTTP/1.0 gets a streamed body unframed, and HEAD gets the head only
+ok   a streamed body's writer that raises is logged and reported once, under the request's context
+ok   a streamed body whose client went away is logged and not reported
+ok   an upgrade gets 101, its own headers only and the writer's bytes unframed
+ok   an upgraded connection's writer that raises is reported once, under the request's context
+ok   an error answer echoes the request's id as X-Request-Id, and its line carries the request's context
 ok   an idle keep-alive connection is closed after read_timeout
 ok   a failed accept is logged and the server keeps accepting
 ok   stop makes the port refuse connections
@@ -66,4 +73,4 @@ ok   listen_fd naming a read-write regular file raises PortInUse
 ok   listen_fd naming a connected socket that does not listen raises PortInUse
 ok   where SO_ACCEPTCONN cannot be read (macOS) an inherited listener is still served
 ok   where SO_ACCEPTCONN cannot be read (macOS) a file, a closed number and a connected socket are still refused
-68 tests, 274 assertions, 0 failures
+75 tests, 317 assertions, 0 failures

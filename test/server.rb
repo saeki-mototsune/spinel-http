@@ -247,6 +247,197 @@ class AbortInSweepServer < SpinelHttp::Server
   end
 end
 
+# ---- streams, upgrades, the stream-failure hook and log contexts ----
+
+# A log context with a name, and the name a line is written under ("-" for
+# none). The base's stub keeps the call static (NOTES.md rule 13).
+class SpinelHttp::HttpLogContext
+  def context_tag
+    "-"
+  end
+end
+
+class TagContext < SpinelHttp::HttpLogContext
+  def initialize(tag)
+    @tag = tag
+  end
+
+  def context_tag
+    @tag
+  end
+end
+
+# The thread's log context in one slot: the tests send one request at a
+# time, so one slot stands for the connection thread's. Installed at load,
+# before any server thread starts.
+class SlotSwitch < SpinelHttp::HttpLogSwitch
+  def initialize
+    @current = SpinelHttp::HttpLogContext::NONE
+  end
+
+  def current_context
+    @current
+  end
+
+  def swap_context(ctx)
+    old = @current
+    @current = ctx
+    old
+  end
+end
+
+SpinelHttp::HttpLogSwitch.installed_switch = SlotSwitch.new
+
+# An HttpLog writing "<LEVEL> [<context>] <message>" lines, the context
+# being the one current when the line is logged.
+class ContextLog < SpinelHttp::HttpLog
+  def initialize(io)
+    @io = io
+  end
+
+  def info(msg) = write_tagged("INFO", msg)
+  def warn(msg) = write_tagged("WARN", msg)
+  def error(msg) = write_tagged("ERROR", msg)
+
+  def write_tagged(level, msg)
+    tag = SpinelHttp::HttpLogSwitch.installed_switch.current_context.context_tag
+    @io.write("#{level} [#{tag}] #{msg}\n")
+    nil
+  end
+end
+
+# What the installed StreamFailure was told, one "<class>: <message>
+# [<context>]" line per failure.
+$stream_failures = Array.new(0) { "" }
+
+class RecordingFailure < SpinelHttp::StreamFailure
+  def stream_failed(error)
+    tag = SpinelHttp::HttpLogSwitch.installed_switch.current_context.context_tag
+    $stream_failures << "#{error.class.name}: #{error.message} [#{tag}]"
+    nil
+  end
+end
+
+SpinelHttp.stream_failure = RecordingFailure.new
+
+$stream_log = StringIO.new
+$stream_logger = ContextLog.new($stream_log)
+
+# A streamed body that logs a line while it is written, then writes
+# "streamed" in two chunks or raises.
+class LoggingWriter < SpinelHttp::BodyWriter
+  def initialize(fail)
+    @fail = fail
+  end
+
+  def write_body(sink)
+    $stream_logger.info("streaming")
+    raise "stream broke" if @fail
+
+    sink.write("stream")
+    sink.write("")
+    sink.write("ed")
+    nil
+  end
+end
+
+class BrokenUpgrade < SpinelHttp::BodyWriter
+  def write_body(sink)
+    raise ArgumentError, "upgrade broke"
+  end
+end
+
+# A streamed body whose client went away: it raises what a write or read
+# on a closed peer raises (0 EPIPE, 1 ECONNRESET, 2 EOFError, 3 IOError),
+# which is logged and not reported.
+class GoneWriter < SpinelHttp::BodyWriter
+  def initialize(which)
+    @which = which
+  end
+
+  def write_body(sink)
+    raise Errno::EPIPE, "gone" if @which == "0"
+    raise Errno::ECONNRESET, "gone" if @which == "1"
+    raise EOFError, "gone" if @which == "2"
+
+    raise IOError, "gone"
+  end
+end
+
+# The handler of the stream server. Each request gets the context
+# "req-<path>" and, for /id/..., the request id "id-<rest>", as a
+# request-id middleware would give them; the context is current while the
+# handler runs and the thread's own is back when it returns or raises, as
+# such a middleware leaves it (save, work, restore in `ensure`: NOTES.md
+# rule 16).
+class StreamApp < SpinelHttp::HttpHandler
+  def call(req)
+    ctx = TagContext.new("req-#{req.path}")
+    req.log_context = ctx
+    req.request_id = "id-#{req.path.byteslice(4, req.path.bytesize - 4)}" if req.path.start_with?("/id/")
+    saved = SpinelHttp::HttpLogSwitch.installed_switch.swap_context(ctx)
+    res = respond_to(req)
+    res
+  ensure
+    SpinelHttp::HttpLogSwitch.installed_switch.swap_context(saved)
+  end
+
+  def respond_to(req)
+    res = SpinelHttp::Response.new
+    case req.path
+    when "/stream"
+      res.body_writer = LoggingWriter.new(false)
+    when "/stream_boom"
+      res.body_writer = LoggingWriter.new(true)
+    when "/stream_gone"
+      res.body_writer = GoneWriter.new(req.query_string)
+    when "/upgrade"
+      res.set_header("Upgrade", "websocket")
+      res.upgrade!(LoggingWriter.new(false))
+    when "/upgrade_boom"
+      res.set_header("Upgrade", "websocket")
+      res.upgrade!(BrokenUpgrade.new)
+    when "/id/boom"
+      raise "kaboom with an id"
+    when "/id/reject"
+      raise SpinelHttp::QueryTooDeep, "nested too deeply (limit 32)"
+    when "/boom"
+      raise "kaboom without an id"
+    else
+      res.content_type = "text/plain"
+      res.body = "plain #{req.request_id}"
+    end
+    res
+  end
+end
+
+# The context current on the connection thread once a writer had run, one
+# entry per writer.
+$after_writer = Array.new(0) { "" }
+
+class ContextAfterWriterServer < SpinelHttp::Server
+  private
+
+  def run_writer_scoped(writer, sink, ctx)
+    ok = super
+    $after_writer << SpinelHttp::HttpLogSwitch.installed_switch.current_context.context_tag
+    ok
+  end
+end
+
+# A stream server, its client's whole answer to one raw request, and the
+# server stopped.
+def stream_exchange(raw)
+  server = SpinelHttp::Server.new(StreamApp.new, port: 0, read_timeout: 1, logger: $stream_logger)
+  server.start
+  c = RawClient.new(server.port)
+  c.send_raw(raw)
+  out = c.read_to_close
+  c.close
+  server.stop
+  out
+end
+
 $log = StringIO.new
 $server = SpinelHttp::Server.new(ServerTestApp.new, port: 0, read_timeout: 1,
                                  max_head_bytes: 1024, max_body_bytes: 64, logger: TestLog.new($log))
@@ -610,6 +801,119 @@ test "a header or cookie stored past set_header's CR/LF check gets 500, and noth
   assert_equal "", cookie.header("set-cookie")
   assert_equal "hi", c.get("/hello", "Connection: close\r\n").body
   c.close
+end
+
+test "a streamed body is sent chunked under the request's context, and the terminator ends it" do
+  $stream_log = StringIO.new
+  $stream_logger = ContextLog.new($stream_log)
+  raw = stream_exchange("GET /stream HTTP/1.1\r\nHost: t\r\n\r\n")
+  head, body = raw.split("\r\n\r\n", 2)
+  assert head.start_with?("HTTP/1.1 200 OK\r\n"), raw
+  res = RawResponse.new("", head, "")
+  assert_equal "chunked", res.header("transfer-encoding")
+  assert_equal "", res.header("content-length")
+  assert_equal "close", res.header("connection")
+  # two chunks (the empty write sends nothing), then the terminator
+  assert_equal "6\r\nstream\r\n2\r\ned\r\n0\r\n\r\n", body
+  assert_includes $stream_log.string, "INFO [req-/stream] streaming\n"
+end
+
+test "HTTP/1.0 gets a streamed body unframed, and HEAD gets the head only" do
+  raw = stream_exchange("GET /stream HTTP/1.0\r\n\r\n")
+  head, body = raw.split("\r\n\r\n", 2)
+  assert_equal "", RawResponse.new("", head, "").header("transfer-encoding")
+  assert_equal "streamed", body
+  raw = stream_exchange("HEAD /stream HTTP/1.1\r\nHost: t\r\n\r\n")
+  head, body = raw.split("\r\n\r\n", 2)
+  assert head.start_with?("HTTP/1.1 200 OK\r\n"), raw
+  assert_equal "", body
+end
+
+test "a streamed body's writer that raises is logged and reported once, under the request's context" do
+  $stream_log = StringIO.new
+  $stream_logger = ContextLog.new($stream_log)
+  $stream_failures = Array.new(0) { "" }
+  raw = stream_exchange("GET /stream_boom HTTP/1.1\r\nHost: t\r\n\r\n")
+  assert raw.start_with?("HTTP/1.1 200 OK\r\n"), raw
+  # no terminator: nothing can be sent once the writer failed
+  assert_equal "", raw.split("\r\n\r\n", 2)[1].to_s
+  assert_includes $stream_log.string, "INFO [req-/stream_boom] streaming\n"
+  assert_includes $stream_log.string, "ERROR [req-/stream_boom] stream error: RuntimeError: stream broke\n"
+  assert_equal ["RuntimeError: stream broke [req-/stream_boom]"], $stream_failures
+end
+
+test "a streamed body whose client went away is logged and not reported" do
+  $stream_log = StringIO.new
+  $stream_logger = ContextLog.new($stream_log)
+  $stream_failures = Array.new(0) { "" }
+  ["0", "1", "2", "3"].each do |which|
+    stream_exchange("GET /stream_gone?#{which} HTTP/1.1\r\nHost: t\r\n\r\n")
+  end
+  ["Errno::EPIPE", "Errno::ECONNRESET", "EOFError", "IOError"].each do |name|
+    assert_includes $stream_log.string, "ERROR [req-/stream_gone] stream error: #{name}: "
+  end
+  assert_equal 0, $stream_failures.size
+end
+
+test "an upgrade gets 101, its own headers only and the writer's bytes unframed" do
+  $stream_log = StringIO.new
+  $stream_logger = ContextLog.new($stream_log)
+  $after_writer = Array.new(0) { "" }
+  server = ContextAfterWriterServer.new(StreamApp.new, port: 0, read_timeout: 1, logger: $stream_logger)
+  server.start
+  c = RawClient.new(server.port)
+  c.send_raw("GET /upgrade HTTP/1.1\r\nHost: t\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+  raw = c.read_to_close
+  c.close
+  server.stop
+  head, body = raw.split("\r\n\r\n", 2)
+  assert head.start_with?("HTTP/1.1 101 Switching Protocols\r\n"), raw
+  res = RawResponse.new("", head, "")
+  assert_equal "websocket", res.header("upgrade")
+  assert_equal "Upgrade", res.header("connection")
+  assert_equal "", res.header("transfer-encoding")
+  assert_equal "", res.header("content-type")
+  assert_equal "", res.header("x-content-type-options")
+  assert_equal "streamed", body
+  assert_includes $stream_log.string, "INFO [req-/upgrade] streaming\n"
+  # the thread's own context is back once the writer has run
+  assert_equal ["-"], $after_writer
+end
+
+test "an upgraded connection's writer that raises is reported once, under the request's context" do
+  $stream_log = StringIO.new
+  $stream_logger = ContextLog.new($stream_log)
+  $stream_failures = Array.new(0) { "" }
+  raw = stream_exchange("GET /upgrade_boom HTTP/1.1\r\nHost: t\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+  assert raw.start_with?("HTTP/1.1 101 "), raw
+  assert_includes $stream_log.string, "ERROR [req-/upgrade_boom] stream error: ArgumentError: upgrade broke\n"
+  assert_equal ["ArgumentError: upgrade broke [req-/upgrade_boom]"], $stream_failures
+end
+
+test "an error answer echoes the request's id as X-Request-Id, and its line carries the request's context" do
+  $stream_log = StringIO.new
+  $stream_logger = ContextLog.new($stream_log)
+  server = SpinelHttp::Server.new(StreamApp.new, port: 0, read_timeout: 1, logger: $stream_logger)
+  server.start
+  c = RawClient.new(server.port)
+  boom = c.get("/id/boom")
+  assert_equal "HTTP/1.1 500 Internal Server Error", boom.status_line
+  assert_equal "id-boom", boom.header("x-request-id")
+  rejected = c.get("/id/reject")
+  assert_equal "HTTP/1.1 400 Bad Request", rejected.status_line
+  assert_equal "id-reject", rejected.header("x-request-id")
+  # no id given: none sent
+  plain = c.get("/boom")
+  assert_equal "HTTP/1.1 500 Internal Server Error", plain.status_line
+  assert_equal "", plain.header("x-request-id")
+  assert_equal "plain ", c.get("/hello", "Connection: close\r\n").body
+  c.close
+  server.stop
+  assert_includes $stream_log.string, "ERROR [req-/id/boom] RuntimeError: kaboom with an id\n"
+  assert_includes $stream_log.string, "INFO [req-/id/reject] rejected request (400 Bad Request): nested too deeply (limit 32)\n"
+  assert_includes $stream_log.string, "ERROR [req-/boom] RuntimeError: kaboom without an id\n"
+  # the thread's own context is back after each
+  assert_equal "-", SpinelHttp::HttpLogSwitch.installed_switch.current_context.context_tag
 end
 
 test "an idle keep-alive connection is closed after read_timeout" do

@@ -43,4 +43,7 @@ ok   header_params skips junk, keeps bare names as empty values and trims blanks
 ok   header_scheme reads Bearer; the credential is a bare parameter
 ok   header_params is empty for a missing header and one over 8 KiB
 ok   header_params tolerates any bytes in values
-45 tests, 231 assertions, 0 failures
+ok   negotiate_locale with q-values, regions, wildcards and junk
+ok   negotiate_locale reads at most 4 KB and 32 entries and never raises on bad text
+ok   entry_quality reads an entry's q parameter in thousandths
+48 tests, 282 assertions, 0 failures
