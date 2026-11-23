@@ -1,0 +1,59 @@
+name: Set up Spinel
+description: Build a Spinel release from source (cached) and put spin and spinel on PATH.
+
+inputs:
+  repository:
+    description: GitHub repository to build, as owner/name.
+    required: true
+  tag:
+    description: Release tag to build.
+    required: true
+  cache-name:
+    description: Names the cache and the install directory under ~/.spinel-builds.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # ImageOS and ImageVersion are variables of the runner process, not of
+    # the expression context.
+    - name: Name the runner image
+      id: image
+      shell: bash
+      run: echo "id=${ImageOS:-unknown}-${ImageVersion:-0}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Spinel
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.spinel-builds/${{ inputs.cache-name }}/${{ inputs.tag }}
+        key: spinel-${{ inputs.cache-name }}-${{ inputs.tag }}-${{ runner.os }}-${{ steps.image.outputs.id }}-${{ runner.arch }}-v1
+
+    - name: Build Spinel
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SPINEL_REPOSITORY: ${{ inputs.repository }}
+        SPINEL_TAG: ${{ inputs.tag }}
+        SPINEL_PREFIX: ~/.spinel-builds/${{ inputs.cache-name }}/${{ inputs.tag }}
+      run: |
+        src="$RUNNER_TEMP/spinel-src"
+        git clone -q --depth 1 --branch "$SPINEL_TAG" "https://github.com/$SPINEL_REPOSITORY" "$src"
+        cd "$src"
+        make deps
+        make -j"$(nproc)"
+        make install PREFIX="${SPINEL_PREFIX/#\~/$HOME}"
+
+    # Saved right after the build, so a failure later in the job does not
+    # cost the next run another build.
+    - name: Save Spinel
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.spinel-builds/${{ inputs.cache-name }}/${{ inputs.tag }}
+        key: ${{ steps.cache.outputs.cache-primary-key }}
+
+    - name: Put spin and spinel on PATH
+      shell: bash
+      run: |
+        echo "$HOME/.spinel-builds/${{ inputs.cache-name }}/${{ inputs.tag }}/bin" >> "$GITHUB_PATH"

@@ -1,0 +1,6 @@
+ok   assert passes on a truthy value
+ok   assert_equal passes on equal values
+ok   assert_nil passes on nil
+ok   assert_includes passes on a member
+ok   assert_raises passes when the block raises
+5 tests, 5 assertions, 0 failures

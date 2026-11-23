@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Matz's Spinel: the library must build and pass with the upstream release.
+  upstream:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
+        with:
+          ruby-version: "3.3"
+
+      - name: Install zlib headers
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+
+      - uses: ./.github/actions/setup-spinel
+        with:
+          repository: matz/spinel
+          tag: "2026.10.25"
+          cache-name: upstream
+
+      - name: Standalone check
+        run: |
+          script/check-standalone --self-test
+          script/check-standalone
+
+      - name: Tests
+        run: |
+          spinel --version
+          spin flags
+          spin test
+
+  # The fork (saeki-mototsune/spinel), the release `cybertrain setup` builds.
+  fork:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
+        with:
+          ruby-version: "3.3"
+
+      - name: Install zlib headers
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+
+      - uses: ./.github/actions/setup-spinel
+        with:
+          repository: saeki-mototsune/spinel
+          tag: "2026.11.15.7033"
+          cache-name: fork
+
+      - name: Standalone check
+        run: |
+          script/check-standalone --self-test
+          script/check-standalone
+
+      - name: Tests
+        run: |
+          spinel --version
+          spin flags
+          spin test

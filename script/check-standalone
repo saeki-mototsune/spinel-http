@@ -1,0 +1,68 @@
+#!/usr/bin/env ruby
+# Guards the boundary of the library: no file under spinel-http/ may require
+# anything outside spinel-http/, other than the Ruby standard-library names
+# in ALLOWED. The library must load on its own.
+#
+# usage: ruby script/check-standalone [--self-test]
+ALLOWED = %w[socket json digest uri].freeze
+
+# The offences in `files` (relative paths under root), as "file:line: text".
+def offences(root, files)
+  found = []
+  files.each do |f|
+    File.foreach(File.join(root, f)).with_index(1) do |line, n|
+      code = line.sub(/\A\s*#.*/, "")
+      if (m = code.match(/\A\s*require\s*\(?\s*["']([^"']+)["']/))
+        name = m[1]
+        next if ALLOWED.include?(name) || name.start_with?("spinel-http/")
+
+        found << "#{f}:#{n}: require \"#{name}\" is outside spinel-http/"
+      elsif (m = code.match(/\A\s*require_relative\s*\(?\s*["']([^"']+)["']/))
+        target = File.expand_path(m[1], File.dirname(File.join(root, f)))
+        next if target.start_with?(File.join(File.expand_path(root), "spinel-http") + "/")
+
+        found << "#{f}:#{n}: require_relative \"#{m[1]}\" leaves spinel-http/"
+      end
+    end
+  end
+  found
+end
+
+def check(root)
+  files = Dir.glob("spinel-http/**/*.rb", base: root).sort
+  [files, offences(root, files)]
+end
+
+if ARGV == ["--self-test"]
+  require "tmpdir"
+  require "fileutils"
+  Dir.mktmpdir do |dir|
+    bad = File.join(dir, "bad")
+    good = File.join(dir, "good")
+    FileUtils.mkdir_p([File.join(bad, "spinel-http"), File.join(good, "spinel-http")])
+    File.write(File.join(bad, "spinel-http", "a.rb"), "require \"json\"\nrequire \"rails\"\nrequire_relative \"../other\"\n")
+    File.write(File.join(good, "spinel-http", "a.rb"), "require \"json\"\nrequire \"spinel-http/b\"\nrequire_relative \"b\"\n# require \"rails\"\n")
+    File.write(File.join(good, "spinel-http", "b.rb"), "module B; end\n")
+    _, bad_found = check(bad)
+    _, good_found = check(good)
+    if bad_found.length != 2
+      warn "self-test: the failing fixture reported #{bad_found.length} offences, expected 2"
+      exit 1
+    end
+    unless good_found.empty?
+      warn "self-test: the passing fixture reported: #{good_found.join("; ")}"
+      exit 1
+    end
+  end
+  puts "check-standalone self-test: ok"
+  exit 0
+end
+
+root = File.expand_path("..", __dir__)
+files, found = check(root)
+unless found.empty?
+  warn "spinel-http/ requires code outside itself:"
+  found.each { |o| warn "  #{o}" }
+  exit 1
+end
+puts "standalone: #{files.length} files, none requiring outside spinel-http/"
