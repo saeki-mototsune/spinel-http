@@ -1,0 +1,18 @@
+ok   set_value stores and reads a scalar
+ok   add_list_value builds a list, absent key returns empty array
+ok   child! creates and returns a nested Params, nested() never stores
+ok   key? is true for scalars, lists and nested params
+ok   inspect lists scalars, then lists, then nested, each in insertion order (Params has no keys)
+ok   set_path assembles nested params from a Query.split_key-shaped path
+ok   a name can only be one kind at a time: last write wins, like Rack
+ok   to_h returns only scalars, empty? and inspect are deterministic
+ok   set_upload stores a file; upload is nil when absent, upload? says which
+ok   the nullable upload return works in an if, the way a controller uses it
+ok   an empty file still counts as sent
+ok   a file evicts a String, a list and a nested Params of the same name
+ok   set_value, add_list_value and child! evict a file of the same name
+ok   uploads are inspected after scalars, lists and nested Params
+ok   int reads a bounded decimal and never raises
+ok   parse_int accepts an optional minus and at most 18 digits
+ok   page_number is 1-based and clamped to Params.max_page
+17 tests, 98 assertions, 0 failures
