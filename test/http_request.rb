@@ -1,5 +1,6 @@
 require "zlib"
 require "spinel-http/request"
+require "spinel-http/multipart"
 require "spinel-http/client_error"
 require_relative "support/check"
 

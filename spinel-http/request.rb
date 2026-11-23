@@ -1,7 +1,7 @@
 require "spinel-http/query"
 require "spinel-http/header_name"
 require "spinel-http/parser"
-require "spinel-http/multipart"
+require "spinel-http/multipart_form"
 require "spinel-http/ip_address"
 require "spinel-http/log"
 
@@ -21,6 +21,14 @@ module SpinelHttp
   # {Request#decoded_body}; a client fault, answered 400.
   # @api public
   class BodyTooLarge < QueryInvalid
+  end
+
+  # A request needs a feature the program did not load: a multipart body
+  # with no multipart parser installed (see {MultipartParser}). A client
+  # fault, answered 415 (see ClientError); a QueryInvalid like the other
+  # faults in request data.
+  # @api public
+  class UnsupportedMediaType < QueryInvalid
   end
 
   # One incoming HTTP request. Header names are expected lowercased (as
@@ -539,7 +547,7 @@ module SpinelHttp
     # about 14 ms of the worker's time (the inflate runs in C and does not
     # yield), which is the cost a hostile client can impose per request.
     #
-    # {GzipFFI.install!} (the gzip support) installs the inflater; until a
+    # `require "spinel-http/gzip"` installs the inflater; until a
     # program loads it and calls it, every gzip body is answered as
     # undecodable (a 400).
     # @example
@@ -673,10 +681,10 @@ module SpinelHttp
     # The default refuses every gzip body: the only bounded inflater is
     # GzipFFI (system zlib through Spinel FFI), which cannot be loaded here
     # (CRuby loads this file too, and Spinel's FFI DSL exists only under
-    # Spinel), so {GzipFFI.install!} installs it; hence the default's
-    # message. A module-level ivar with a lambda default, passed positionally
+    # Spinel), so `require "spinel-http/gzip"` installs it; hence the
+    # default's message. A module-level ivar with a lambda default, passed positionally
     # (NOTES.md rules 4 and 13).
-    @inflater = ->(data, limit) { raise BodyUndecodable, "gzip request bodies are not decoded: no inflater is installed (require the gzip support)" }
+    @inflater = ->(data, limit) { raise BodyUndecodable, "gzip request bodies are not decoded: no inflater is installed (require \"spinel-http/gzip\")" }
 
     def self.inflater
       @inflater
@@ -684,6 +692,26 @@ module SpinelHttp
 
     def self.inflater=(inflater)
       @inflater = inflater
+    end
+
+    # The parser behind #multipart_boundary and #multipart_form: an object
+    # with a hook's two methods (NOTES.md rule 13). The default is the null
+    # parser, which finds no boundary and answers a multipart body with
+    # {UnsupportedMediaType}; `require "spinel-http/multipart"` installs the
+    # real one. A module-level ivar with a literal default (NOTES.md rule 4).
+    @multipart_parser = MultipartParser.new
+
+    # @return [MultipartParser]
+    # @api public
+    def self.multipart_parser
+      @multipart_parser
+    end
+
+    # @param parser [MultipartParser]
+    # @return [nil]
+    def self.multipart_parser=(parser)
+      @multipart_parser = parser
+      nil
     end
 
     # Connection is a comma-separated token list; tokens are compared
@@ -768,7 +796,7 @@ module SpinelHttp
     # @return [String]
     # @api public
     def multipart_boundary
-      Multipart.boundary_from(header("content-type").to_s)
+      Request.multipart_parser.boundary_of(header("content-type").to_s)
     end
 
     # The parsed multipart body, once per request (code that reads one field
@@ -791,7 +819,7 @@ module SpinelHttp
       enc = content_encoding
       raise MultipartMalformed, "encoded multipart bodies are not supported" unless enc.empty? || enc == "identity"
 
-      form = Multipart.parse(@body, header("content-type").to_s)
+      form = Request.multipart_parser.parse_form(@body, header("content-type").to_s)
       @multipart_form = form
       form
     end

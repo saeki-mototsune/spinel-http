@@ -1,0 +1,5 @@
+ok   a multipart POST is answered 415 when multipart is not loaded
+ok   multipart_boundary is empty when multipart is not loaded
+ok   a gzip body is answered 400 naming the missing inflater
+ok   a plain GET is answered 200
+4 tests, 8 assertions, 0 failures

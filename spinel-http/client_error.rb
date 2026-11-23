@@ -22,7 +22,7 @@ module SpinelHttp
     # and one defined outside the layer to {.extra_faults}.
     # @param e [Exception]
     # @param logger [HttpLog] the Server's sink, the base or a subclass
-    # @return [Integer] 400 or 500 ({.status_for})
+    # @return [Integer] 400, 415 or 500 ({.status_for})
     def self.classify(e, logger)
       status = self.status_for(e)
       if status >= 500
@@ -58,13 +58,20 @@ module SpinelHttp
                      "SpinelHttp::MultipartMalformed", "SpinelHttp::MultipartTooManyParts",
                      "SpinelHttp::MultipartPartTooLarge", "SpinelHttp::MultipartHeaderTooLarge"]
 
+    # Full class names of the client faults answered 415, not 400: a request
+    # for a feature the program did not load (a multipart body with no
+    # multipart parser, {UnsupportedMediaType}). Listed by full name like
+    # CLIENT_FAULTS.
+    UNSUPPORTED_FAULTS = ["SpinelHttp::UnsupportedMediaType"]
+
     # {.extra_faults} and {.extra_faults=}, the client faults defined
     # outside the layer, are in spinel-http/extra_faults.rb, which a
     # library that registers one can load without the rest of the layer.
 
-    # 400 for a client fault (CLIENT_FAULTS or {.extra_faults}), 500 for
-    # the app's own exception: an Array lookup, no raise, so a request
-    # logger (for its completion line) and every error path (an error page,
+    # 400 for a client fault (CLIENT_FAULTS or {.extra_faults}), 415 for
+    # one in UNSUPPORTED_FAULTS, 500 for the app's own exception: an Array
+    # lookup, no raise, so a request logger (for its completion line) and every
+    # error path (an error page,
     # Server#respond) can each ask and always agree. `to_s`: Class#name is
     # nil for an anonymous class (`Class.new(StandardError)`) under CRuby,
     # and this runs inside error handlers' rescue clauses, where a
@@ -72,9 +79,10 @@ module SpinelHttp
     # at all. Named status_for, not status: other classes in one program
     # define `status` with other return types (NOTES.md rule 6).
     # @param e [Exception]
-    # @return [Integer] 400 or 500
+    # @return [Integer] 400, 415 or 500
     def self.status_for(e)
       name = e.class.name.to_s
+      return 415 if fault_name_in?(name, UNSUPPORTED_FAULTS)
       return 400 if fault_name_in?(name, CLIENT_FAULTS)
       return 400 if fault_name_in?(name, extra_faults)
 
