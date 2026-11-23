@@ -23,14 +23,6 @@ module SpinelHttp
   class BodyTooLarge < QueryInvalid
   end
 
-  # A request needs a feature the program did not load: a multipart body
-  # with no multipart parser installed (see {MultipartParser}). A client
-  # fault, answered 415 (see ClientError); a QueryInvalid like the other
-  # faults in request data.
-  # @api public
-  class UnsupportedMediaType < QueryInvalid
-  end
-
   # One incoming HTTP request. Header names are expected lowercased (as
   # HttpParser produces them), but #header also finds mixed-case keys so
   # hand-built requests in tests behave the same.

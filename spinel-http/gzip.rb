@@ -20,8 +20,8 @@
 # through the incremental inflater below, a piece of at most PIECE_BYTES at
 # a time whatever the compression ratio.
 #
-# The FFI rules of the FFI notes (spikes/NOTES.md in cybertrain, rules 6 and 15) apply: the out-parameter is a
-# fresh malloc(8) scratch slot per call, never a static ffi_buffer.
+# The FFI rule of NOTES.md (rule 19) applies: the out-parameter is a fresh
+# malloc(8) scratch slot per call, never a static ffi_buffer.
 require "spinel-http/request"
 require "spinel-http/gzip_decoder"
 

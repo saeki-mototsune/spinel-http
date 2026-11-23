@@ -31,6 +31,14 @@ module SpinelHttp
   class MultipartHeaderTooLarge < QueryInvalid
   end
 
+  # A request needs a feature the program did not load: a multipart body
+  # with no multipart parser installed (see {MultipartParser}). A client
+  # fault, answered 415 (see ClientError); a QueryInvalid like the other
+  # faults in request data.
+  # @api public
+  class UnsupportedMediaType < QueryInvalid
+  end
+
   # The flat result of {Multipart.parse}: parallel typed Arrays, in the order
   # the parts arrived, not one Hash of mixed values. It
   # is named MultipartForm and not Multipart::Form: Class#name carried no

@@ -177,3 +177,8 @@ upstream issue filed yet. A comment in the code cites the rule it follows as
     that last segment. So GzipDecoder reports a failure through
     `gzip_status`, and its caller raises its own error, naming no class of
     the gzip support, which may not be in the program.
+
+19. **An FFI out-parameter is a fresh `malloc(8)` slot per call, never a
+    static `ffi_buffer`.** The C side writes the address of its output
+    buffer through the slot; a slot shared across calls would be overwritten
+    by the next one. GzipDecoder allocates a slot for each call.
