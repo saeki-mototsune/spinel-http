@@ -84,7 +84,7 @@ jobs:
       - uses: ./.github/actions/setup-spinel
         with:
           repository: saeki-mototsune/spinel
-          tag: "2026.11.15.7033"
+          tag: "2026.11.23.7035"
           cache-name: fork
 
       - name: Standalone check

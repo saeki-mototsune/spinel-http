@@ -182,7 +182,9 @@ release.
 ## Compilers
 
 Upstream Spinel 2026.10.25 (matz/spinel) and the saeki-mototsune/spinel
-fork 2026.11.15.7033. CI builds and tests with both.
+fork 2026.11.23.7035. CI builds and tests with both. An older Spinel
+(such as 2026.09.12) does not build it: `spin test` fails in server.rb
+and response.rb.
 
 ## Tests
 

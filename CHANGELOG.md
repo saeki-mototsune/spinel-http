@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- CI tests with the fork 2026.11.23.7035 (was 2026.11.15.7033), the
+  release cybertrain 0.4.2 uses; 0.1.1 passes all 17 programs under it.
+
 ## 0.1.1
 
 - **Security:** the parser answers 400 for CR, LF or NUL anywhere in the

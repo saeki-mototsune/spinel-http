@@ -1,7 +1,7 @@
 # Spinel constraints for spinel-http
 
 spinel-http builds and passes its tests under upstream Spinel (matz/spinel,
-2026.10.25) and under the fork (saeki-mototsune/spinel, 2026.11.15.7033). A
+2026.10.25) and under the fork (saeki-mototsune/spinel, 2026.11.23.7035). A
 workaround that upstream needs is taken even where the fork does not need it.
 Each rule names the upstream issue it comes from, where one is filed.
 
