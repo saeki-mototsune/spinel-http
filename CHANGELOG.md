@@ -1,9 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.1.2
 
+- **Security:** when a response is refused because a header stored through
+  `Response#headers` directly has CR or LF in its name, the server's log
+  line quotes the name (String#inspect) instead of writing it as it is, so
+  the name can no longer start a forged log line.
 - CI tests with the fork 2026.11.23.7035 (was 2026.11.15.7033), the
-  release cybertrain 0.4.2 uses; 0.1.1 passes all 17 programs under it.
+  release cybertrain 0.4.2 uses. 0.1.1 passes all 17 programs under it.
 
 ## 0.1.1
 

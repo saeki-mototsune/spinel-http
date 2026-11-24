@@ -12,7 +12,7 @@ Add the library to your `spin.toml`:
 
 ```toml
 [dependencies]
-spinel-http = { git = "https://github.com/saeki-mototsune/spinel-http", ref = "v0.1.1" }
+spinel-http = { git = "https://github.com/saeki-mototsune/spinel-http", ref = "v0.1.2" }
 ```
 
 `bin/hello.rb` (also built and checked in CI as `examples/hello`):
