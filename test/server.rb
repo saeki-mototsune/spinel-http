@@ -40,6 +40,11 @@ class ServerTestApp < SpinelHttp::HttpHandler
     when "/inject_cookie"
       res.cookies << "a=b\r\nInjected: yes"
       res.body = "never sent"
+    when "/inject_name"
+      # a header name with LF, past set_header's check: the log line names
+      # it quoted, so it cannot start a forged line
+      res.headers["X-Bad\nForged: log line"] = "v"
+      res.body = "never sent"
     when "/slow"
       $slow_started = true
       sleep 1
@@ -800,6 +805,16 @@ test "a header or cookie stored past set_header's CR/LF check gets 500, and noth
   assert_equal "", cookie.header("injected")
   assert_equal "", cookie.header("set-cookie")
   assert_equal "hi", c.get("/hello", "Connection: close\r\n").body
+  c.close
+end
+
+test "a header name with LF is quoted in the log line, which forges no other" do
+  c = RawClient.new($server.port)
+  res = c.get("/inject_name", "Connection: close\r\n")
+  assert_equal "HTTP/1.1 500 Internal Server Error", res.status_line
+  assert_equal "", res.header("forged")
+  assert_includes $log.string, "response not written: header \"X-Bad\\nForged: log line\" must not contain CR or LF"
+  refute $log.string.include?("\nForged: log line"), "a log line starts with the forged text:\n#{$log.string}"
   c.close
 end
 

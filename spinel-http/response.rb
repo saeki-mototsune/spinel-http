@@ -431,9 +431,13 @@ module SpinelHttp
       nil
     end
 
+    # The message names the header; a name that itself holds CR or LF is
+    # quoted with String#inspect, so the server's log line for it stays one
+    # line and cannot forge another.
     def reject_crlf!(name, text)
       if text.include?("\r") || text.include?("\n")
-        raise ArgumentError, "header #{name} must not contain CR or LF"
+        shown = name.include?("\r") || name.include?("\n") ? name.inspect : name
+        raise ArgumentError, "header #{shown} must not contain CR or LF"
       end
     end
 
