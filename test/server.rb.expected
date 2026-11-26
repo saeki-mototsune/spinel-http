@@ -41,6 +41,10 @@ ok   an upgrade gets 101, its own headers only and the writer's bytes unframed
 ok   an upgraded connection's writer that raises is reported once, under the request's context
 ok   an error answer echoes the request's id as X-Request-Id, and its line carries the request's context
 ok   an idle keep-alive connection is closed after read_timeout
+ok   a head trickled a byte at a time gets 408 at head_timeout, though no read waits read_timeout
+ok   a body trickled a byte at a time gets 408 at body_timeout
+ok   head_timeout counts from a head's first byte: an idle keep-alive wait is read_timeout's
+ok   a connection over max_connections gets 503 and is closed; one more is served once a slot frees
 ok   a failed accept is logged and the server keeps accepting
 ok   stop makes the port refuse connections
 ok   a handler's exception is logged under the request's log context; the next request on the connection is under NONE
@@ -74,4 +78,4 @@ ok   listen_fd naming a read-write regular file raises PortInUse
 ok   listen_fd naming a connected socket that does not listen raises PortInUse
 ok   where SO_ACCEPTCONN cannot be read (macOS) an inherited listener is still served
 ok   where SO_ACCEPTCONN cannot be read (macOS) a file, a closed number and a connected socket are still refused
-76 tests, 321 assertions, 0 failures
+80 tests, 339 assertions, 0 failures

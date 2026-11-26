@@ -938,6 +938,103 @@ test "an idle keep-alive connection is closed after read_timeout" do
   c.close
 end
 
+# Slowloris: a client that sends a byte just inside each read_timeout.
+# Trickles `bytes` one at a time, `gap` seconds apart (well inside
+# read_timeout), and stops early once the server has answered or closed.
+def trickle(c, bytes, gap)
+  i = 0
+  while i < bytes.bytesize
+    break unless c.silent_for?(gap)
+
+    begin
+      c.send_raw(bytes.byteslice(i, 1))
+    rescue IOError, Errno::EPIPE, Errno::ECONNRESET
+      break
+    end
+    i += 1
+  end
+  nil
+end
+
+# Polls open_connections until it reads `count` (at most 2 s).
+def wait_open(server, count)
+  tries = 0
+  while server.open_connections != count && tries < 200
+    sleep 0.01
+    tries += 1
+  end
+  server.open_connections
+end
+
+test "a head trickled a byte at a time gets 408 at head_timeout, though no read waits read_timeout" do
+  server = SpinelHttp::Server.new(ServerTestApp.new, port: 0, read_timeout: 1, head_timeout: 0.5,
+                                  logger: TestLog.new($log))
+  server.start
+  c = RawClient.new(server.port)
+  c.send_raw("GET /hello HTTP/1.1\r\n")
+  trickle(c, "X-Slow: aaaaaaaaaaaaaaaaaaaa\r\n", 0.2)
+  res = c.read_response(false)
+  assert_equal "HTTP/1.1 408 Request Timeout", res.status_line
+  assert_equal "close", res.header("connection")
+  assert c.closed_by_server?
+  c.close
+  server.stop
+end
+
+test "a body trickled a byte at a time gets 408 at body_timeout" do
+  server = SpinelHttp::Server.new(ServerTestApp.new, port: 0, read_timeout: 1, body_timeout: 0.5,
+                                  logger: TestLog.new($log))
+  server.start
+  c = RawClient.new(server.port)
+  c.send_raw("POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 20\r\n\r\n")
+  trickle(c, "aaaaaaaaaaaaaaaaaaaa", 0.2)
+  res = c.read_response(false)
+  assert_equal "HTTP/1.1 408 Request Timeout", res.status_line
+  assert c.closed_by_server?
+  c.close
+  server.stop
+end
+
+test "head_timeout counts from a head's first byte: an idle keep-alive wait is read_timeout's" do
+  server = SpinelHttp::Server.new(ServerTestApp.new, port: 0, read_timeout: 2, head_timeout: 0.3,
+                                  body_timeout: 0.3, logger: TestLog.new($log))
+  server.start
+  c = RawClient.new(server.port)
+  assert_equal "hi", c.get("/hello").body
+  assert c.silent_for?(0.6)
+  assert_equal "hi", c.get("/hello").body
+  c.send_raw("POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 2\r\n\r\nok")
+  assert_equal "ok", c.read_response(false).body
+  c.close
+  server.stop
+end
+
+test "a connection over max_connections gets 503 and is closed; one more is served once a slot frees" do
+  log = StringIO.new
+  server = SpinelHttp::Server.new(ServerTestApp.new, port: 0, read_timeout: 5, max_connections: 1,
+                                  logger: TestLog.new(log))
+  server.start
+  first = RawClient.new(server.port)
+  assert_equal 1, wait_open(server, 1)
+  over = RawClient.new(server.port)
+  res = over.read_response(false)
+  assert_equal "HTTP/1.1 503 Service Unavailable", res.status_line
+  assert_equal "close", res.header("connection")
+  assert over.closed_by_server?
+  over.close
+  again = RawClient.new(server.port)
+  assert_equal "HTTP/1.1 503 Service Unavailable", again.read_response(false).status_line
+  again.close
+  assert_equal 1, LogCapture.count(log.string, "WARN", "max_connections (1) reached")
+  assert_equal "hi", first.get("/hello", "Connection: close\r\n").body
+  first.close
+  assert_equal 0, wait_open(server, 0)
+  later = RawClient.new(server.port)
+  assert_equal "hi", later.get("/hello", "Connection: close\r\n").body
+  later.close
+  server.stop
+end
+
 test "a failed accept is logged and the server keeps accepting" do
   server = FlakyAcceptServer.new(ServerTestApp.new, port: 0, logger: TestLog.new($log))
   server.start

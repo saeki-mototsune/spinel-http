@@ -102,6 +102,8 @@ The server answers these itself and closes the connection:
 | 400 | A malformed request line or header line, a header name that is not a token, CR, LF or NUL in the head, a head over `max_head_bytes`, or an invalid or duplicated Content-Length. |
 | 411 | Any Transfer-Encoding: chunked request bodies are not supported. |
 | 413 | A Content-Length over `max_body_bytes`. The body is not read. |
+| 408 | A head not whole within `head_timeout` of its first byte, or a body not whole within `body_timeout` of the head. |
+| 503 | A connection accepted while `max_connections` are open. It is closed at once; the warning is logged once until a slot frees. |
 
 An exception that escapes your handler's `call` is answered by the
 server, and the connection stays open:
@@ -151,14 +153,19 @@ call them once at boot, before the server starts.
 | Timeout | Default | What it bounds |
 | --- | --- | --- |
 | `read_timeout:` | 15 s | each wait for more bytes of a request, and an idle keep-alive connection |
+| `head_timeout:` | 30 s | the whole request head, from its first byte |
+| `body_timeout:` | 120 s | the whole request body, from the end of the head |
 | `stream_write_timeout:` | 15 s | each write of a streamed response to a client that does not read |
 | `drain_timeout:` | 10 s | the wait for requests in flight once a stop is requested |
 
-`read_timeout` limits each read, not the whole request: a client that sends
-one byte every few seconds keeps its connection, and the buffer it fills up
-to `max_head_bytes` or `max_body_bytes`, for as long as it keeps sending.
-There is no connection cap either. Do not expose the server to the internet
-without a proxy in front.
+`read_timeout` limits each read; `head_timeout` and `body_timeout` limit
+the whole head and body, so a client that sends one byte every few seconds
+(slowloris) gets 408 once either is over, however steadily it sends. Raise
+`body_timeout` if your clients upload `max_body_bytes` over slow links.
+`max_connections:` (default 1024) caps the connections open at once, each a
+thread; one more is answered 503 and closed. Keep it below the process's
+descriptor limit (`ulimit -n`). These bound what one client can hold, not a
+flood of many: put a proxy in front of a server exposed to the internet.
 
 ## One method name, one return type
 
