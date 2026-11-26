@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0
+
+- **Security (CWE-400, slowloris):** `read_timeout` bounded each wait for
+  more bytes but not the request, so a client that sent a byte just inside
+  each wait held its connection and thread indefinitely. Two new
+  `Server.new` options bound the whole request: `head_timeout:` (default
+  30 s, counted from the head's first byte, so an idle keep-alive wait is
+  still `read_timeout`'s) and `body_timeout:` (default 120 s, from the end
+  of the head). Past either the server answers 408 and closes.
+- `max_connections:` (default 1024) caps the connections open at once.
+  One accepted over it is answered a prebuilt 503 and closed on the accept
+  thread, with no thread of its own; a warning is logged once each time
+  the cap is reached.
+- The deadlines cost two monotonic clock readings per wait and nothing
+  allocated per request.
+
 ## 0.1.2
 
 - **Security:** when a response is refused because a header stored through

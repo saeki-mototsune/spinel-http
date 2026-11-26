@@ -141,11 +141,19 @@ module SpinelHttp
     # logger: the {HttpLog} the server writes its lines to; the base, the
     # default, writes `"<level>: <msg>"` lines to standard error, and a
     # framework passes its own subclass.
+    # read_timeout bounds each wait for more bytes; head_timeout and
+    # body_timeout bound the whole head (from its first byte) and the whole
+    # body (from the end of the head), so a client that sends a byte just
+    # before each read_timeout cannot hold its connection forever: past
+    # either it gets 408 and the connection closes.
+    # max_connections caps the connections open at once (each is a thread);
+    # one accepted over it gets 503 and is closed at once.
     # @api public
     def initialize(handler, host: "127.0.0.1", port: 3000, read_timeout: 15, drain_timeout: 10.0,
                    max_head_bytes: 65536, max_body_bytes: 10_485_760, logger: HttpLog.new,
                    reuse_port: false,
-                   stream_write_timeout: 15, listen_fd: -1)
+                   stream_write_timeout: 15, listen_fd: -1,
+                   head_timeout: 30.0, body_timeout: 120.0, max_connections: 1024)
       @handler = handler
       @listen_fd = listen_fd
       @stream_write_timeout = stream_write_timeout
@@ -154,6 +162,12 @@ module SpinelHttp
       @reuse_port = reuse_port
       @reuse_socket = nil
       @read_timeout = read_timeout
+      # Float copies, for the deadline arithmetic: a wait is the smaller of
+      # read_timeout and the time left (readable_before?).
+      @read_wait = read_timeout.to_f
+      @head_timeout = head_timeout.to_f
+      @body_timeout = body_timeout.to_f
+      @max_connections = max_connections
       @drain_timeout = drain_timeout
       @max_head_bytes = max_head_bytes
       @max_body_bytes = max_body_bytes
@@ -168,6 +182,12 @@ module SpinelHttp
       @open_count = 0
       @connections = {}   # Connection#id => Connection, for the drain
       @next_connection_id = 0
+      # Set once the cap is reached, cleared once a connection closes below
+      # it: the warning is logged once per episode, not per shed connection.
+      @at_capacity = false
+      # The bytes a connection over max_connections is answered with, built
+      # once: shedding allocates no response.
+      @overloaded = overloaded_text
     end
 
     # Binds, listens and spawns the accept thread; returns once listening.
@@ -527,16 +547,49 @@ module SpinelHttp
     # never as a Thread.new argument (under Spinel it would lose its type:
     # NOTES.md rule 14).
     # Counted here, on the accept thread, so that once #run has joined it
-    # the drain sees every connection; serve's ensure uncounts it.
+    # the drain sees every connection; serve's ensure uncounts it. At
+    # max_connections the connection is shed instead: no thread.
     def spawn_connection(sock)
       conn = Connection.new(sock)
+      admitted = false
+      warn_full = false
       @lock.synchronize do
-        @open_count += 1
-        @next_connection_id += 1
-        conn.id = @next_connection_id
-        @connections[conn.id] = conn
+        if @open_count < @max_connections
+          admitted = true
+          @open_count += 1
+          @next_connection_id += 1
+          conn.id = @next_connection_id
+          @connections[conn.id] = conn
+        elsif !@at_capacity
+          @at_capacity = true
+          warn_full = true
+        end
       end
-      spawn_serve(sock, conn)
+      if admitted
+        spawn_serve(sock, conn)
+      else
+        @logger.warn("max_connections (#{@max_connections}) reached: refusing new connections with 503") if warn_full
+        shed(sock)
+      end
+      nil
+    end
+
+    # Answers a connection over max_connections with the prebuilt 503 and
+    # closes it, on the accept thread: the answer is a few hundred bytes
+    # into a fresh socket's empty send buffer, so the write does not wait.
+    def shed(sock)
+      sock.write(@overloaded)
+      nil
+    rescue IOError, SystemCallError
+      nil
+    ensure
+      sock.close unless sock.closed?
+    end
+
+    def overloaded_text
+      response = error_response(503)
+      response.set_header("Connection", "close")
+      response.to_http
     end
 
     # A method of its own, so the block captures the two parameters
@@ -549,6 +602,7 @@ module SpinelHttp
       @lock.synchronize do
         @open_count -= 1
         @connections.delete(conn.id)
+        @at_capacity = false if @open_count < @max_connections
       end
       nil
     end
@@ -556,7 +610,10 @@ module SpinelHttp
     # One connection: read a head, read its body, run the app, write the
     # response, and loop while the client keeps the connection alive.
     # Every readpartial is preceded by wait_readable (NOTES.md rule 14); a nil
-    # wait means the client has been silent for read_timeout seconds.
+    # wait means the client has been silent for read_timeout seconds. Once a
+    # head has begun, it must be whole within head_timeout of its first
+    # byte, and the body within body_timeout of the head's end
+    # (readable_before?): a 408 otherwise.
     # Once the server is stopping, a connection idle between requests closes
     # (head_readable?) and a response ends the loop (respond answers
     # Connection: close); one that has not had its first request yet waits
@@ -574,9 +631,17 @@ module SpinelHttp
       buf = +""
       while true
         idx = buf.byteindex(HttpParser::HEAD_END)
+        # 0.0 until the head's first byte is here (a pipelined head's is)
+        head_deadline = 0.0
         while idx.nil?
           raise Rejected.new(400) if buf.bytesize > @max_head_bytes
-          return unless head_readable?(sock, buf.empty?, conn)
+
+          if buf.empty?
+            return unless head_readable?(sock, conn)
+          else
+            head_deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @head_timeout if head_deadline == 0.0
+            return unless readable_before?(sock, head_deadline)
+          end
 
           buf << sock.readpartial(READ_CHUNK)
           idx = buf.byteindex(HttpParser::HEAD_END)
@@ -599,10 +664,13 @@ module SpinelHttp
         raise Rejected.new(400) if length < 0
         raise Rejected.new(413) if length > @max_body_bytes
 
-        while rest.bytesize < length
-          return if sock.wait_readable(@read_timeout).nil?
+        if rest.bytesize < length
+          body_deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @body_timeout
+          while rest.bytesize < length
+            return unless readable_before?(sock, body_deadline)
 
-          rest << sock.readpartial(READ_CHUNK)
+            rest << sock.readpartial(READ_CHUNK)
+          end
         end
         body = rest.byteslice(0, length)
         buf = rest.byteslice(length, rest.bytesize - length)
@@ -624,11 +692,13 @@ module SpinelHttp
       connection_closed(conn)
     end
 
-    # Waits for more of a request head; false once the client has been silent
-    # for read_timeout seconds. A connection with nothing buffered is idle
-    # between requests: it is marked idle while it waits, in one park for the
-    # whole read_timeout, so that the drain can end that wait when the
-    # server stops (shut_idle_connections). It used to wait in ACCEPT_POLL slices
+    # Waits for the first bytes of a request head, on a connection with
+    # nothing buffered; false once the client has been silent for
+    # read_timeout seconds. Such a connection is idle between requests: it
+    # is marked idle while it waits, in one park for the whole read_timeout,
+    # so that the drain can end that wait when the server stops
+    # (shut_idle_connections). The rest of a head that has begun is waited
+    # for by readable_before?. It used to wait in ACCEPT_POLL slices
     # to notice the stop itself, which cost a timer and a scheduler turn per
     # idle connection ten times a second (spinel-feedback.md, 4).
     #
@@ -637,15 +707,29 @@ module SpinelHttp
     # TERM, within ACCEPT_POLL) and its client may already have sent the
     # request, so closing it unread would reset the client. The drain ends
     # its wait once its FIRST_REQUEST_GRACE is over.
-    def head_readable?(sock, idle, conn)
-      return !sock.wait_readable(@read_timeout).nil? unless idle
-
+    def head_readable?(sock, conn)
       # marked first, then the flag read: a stop requested before the mark
       # is seen here, and one requested after it finds the mark
       conn.idle = true
       ready = (@running || conn.awaiting_first_request) && !sock.wait_readable(@read_timeout).nil?
       conn.idle = false
       ready
+    end
+
+    # Waits for more of a head or body that has begun: true once there is
+    # something to read, false once the client has been silent for
+    # read_timeout seconds (the connection closes quietly, as before the
+    # deadlines). Each wait is the smaller of read_timeout and the time
+    # left until `deadline` (a monotonic clock reading); past the deadline
+    # the request is refused with 408, however steadily the client trickles
+    # bytes. Two clock readings and Float arithmetic: nothing allocated.
+    def readable_before?(sock, deadline)
+      left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      raise Rejected.new(408) if left <= 0.0
+      return !sock.wait_readable(@read_wait).nil? if left >= @read_wait
+      raise Rejected.new(408) if sock.wait_readable(left).nil?
+
+      true
     end
 
     # Runs the app and writes its response; true when the connection stays
