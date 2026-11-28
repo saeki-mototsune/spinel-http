@@ -624,6 +624,32 @@ test "a content-length over max_body_bytes is 413 and the stream is reset" do
   server.stop
 end
 
+test "concurrent uploads adding up to more than max_body_bytes do not wait for each other" do
+  server = h2_server(max_body_bytes: 100_000)
+  c = h2_client(server)
+  c.headers(1, [":method", "POST", ":scheme", "http", ":path", "/echo", ":authority", "test"], false)
+  c.headers(3, [":method", "POST", ":scheme", "http", ":path", "/echo", ":authority", "test"], false)
+  a = "a" * 16_000
+  b = "b" * 16_000
+  # 6 x 16 000 bytes on each stream, interleaved: 192 000 together, past
+  # max_body_bytes by more than the connection window
+  i = 0
+  while i < 6
+    last = i == 5 ? 1 : 0
+    c.frame(H2::DATA, last, 1, a)
+    c.frame(H2::DATA, last, 3, b)
+    i += 1
+  end
+  results = c.collect([1, 3], 10)
+  assert_equal "200", results[1].status
+  assert_equal 96_000, results[1].body.bytesize
+  assert_equal "200", results[3].status
+  assert_equal 96_000, results[3].body.bytesize
+  assert_equal -1, c.goaway_code
+  c.close
+  server.stop
+end
+
 test "a header list over max_head_bytes is 400" do
   server = h2_server(max_head_bytes: 200)
   c = h2_client(server)

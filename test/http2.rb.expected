@@ -13,6 +13,7 @@ ok   trailers end a request
 ok   a padded DATA and a padded, prioritized HEADERS are read
 ok   an exception is a 500, a client fault a 400, and the connection stays
 ok   a content-length over max_body_bytes is 413 and the stream is reset
+ok   concurrent uploads adding up to more than max_body_bytes do not wait for each other
 ok   a header list over max_head_bytes is 400
 ok   malformed requests are reset with PROTOCOL_ERROR
 ok   streams past max_streams are refused
@@ -33,4 +34,4 @@ ok   a BodyWriter streams DATA frames and ends the stream; the connection stays
 ok   a writer's wait_closed sees the client reset its stream
 ok   HTTP/1.1 is served as before on a server with http2
 ok   with http2: false the preface is a 400
-35 tests, 126 assertions, 0 failures
+36 tests, 131 assertions, 0 failures
