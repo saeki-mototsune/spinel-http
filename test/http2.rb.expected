@@ -1,0 +1,34 @@
+ok   a GET over h2c is answered with the status, the default headers and the body
+ok   the request carries HTTP/2, its method, :authority as Host and its query
+ok   several requests on one connection, and a body in several DATA frames
+ok   interleaved streams are answered in the order their requests became whole
+ok   a body larger than the window is sent as the client opens it
+ok   a client window of 0 holds the body until WINDOW_UPDATE
+ok   a response header block past the frame size goes out in CONTINUATION
+ok   a request header block in HEADERS and CONTINUATION is read whole
+ok   HEAD and 304 have headers and no DATA
+ok   cookies are joined with '; ', set-cookie is one field each, connection-specific fields are dropped
+ok   trailers end a request
+ok   a padded DATA and a padded, prioritized HEADERS are read
+ok   an exception is a 500, a client fault a 400, and the connection stays
+ok   a content-length over max_body_bytes is 413 and the stream is reset
+ok   a header list over max_head_bytes is 400
+ok   malformed requests are reset with PROTOCOL_ERROR
+ok   streams past max_streams are refused
+ok   a stream the client resets before its turn is not answered
+ok   a first frame that is not SETTINGS is a PROTOCOL_ERROR
+ok   DATA on stream 0, PUSH_PROMISE and an even stream are PROTOCOL_ERRORs
+ok   a header block interrupted by another frame is a PROTOCOL_ERROR
+ok   a broken header block is a COMPRESSION_ERROR
+ok   a frame over the frame size and a bad PING are FRAME_SIZE_ERRORs
+ok   a header block past max_head_bytes compressed ends the connection
+ok   a WINDOW_UPDATE past 2^31-1 on the connection is a FLOW_CONTROL_ERROR
+ok   PING is answered with its payload, and SETTINGS with an ACK
+ok   an idle connection gets GOAWAY after read_timeout
+ok   a body not whole within body_timeout is 408
+ok   stop sends GOAWAY to an idle connection, answers the request in flight, and drains
+ok   a BodyWriter streams DATA frames and ends the stream; the connection stays
+ok   a writer's wait_closed sees the client reset its stream
+ok   HTTP/1.1 is served as before on a server with http2
+ok   with http2: false the preface is a 400
+33 tests, 100 assertions, 0 failures

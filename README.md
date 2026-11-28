@@ -1,7 +1,7 @@
 # spinel-http
 
-An HTTP/1.1 server library for [Spinel](https://github.com/matz/spinel)
-(module `SpinelHttp`). It was extracted from a web framework but has no
+An HTTP/1.1 and HTTP/2 server library for
+[Spinel](https://github.com/matz/spinel) (module `SpinelHttp`). It was extracted from a web framework but has no
 framework concepts: you give it a handler, it parses requests, calls the
 handler and writes the response. It also offers query and parameter parsing,
 cookies and server-sent events.
@@ -93,6 +93,49 @@ answers `https://<host>` only when a trusted peer sends
 `X-Forwarded-Proto: https`. `request.loopback?` never reads the headers. Both
 settings are off until set.
 
+## HTTP/2
+
+The server also speaks HTTP/2 (RFC 9113) over cleartext TCP, on the same
+port: a connection whose first bytes are the HTTP/2 connection preface is
+served as HTTP/2 ("h2c with prior knowledge"), any other as HTTP/1.1.
+That is what a reverse proxy configured for an h2c upstream sends (Envoy,
+HAProxy's `proto h2`, Caddy's `versions h2c`), and what
+`curl --http2-prior-knowledge` sends:
+
+```
+$ curl --http2-prior-knowledge http://127.0.0.1:8080/
+hello
+```
+
+There is no TLS in the server, so a browser, which speaks HTTP/2 only over
+TLS, still reaches it over HTTP/1.1, or over HTTP/2 through the proxy in
+front. The `Upgrade: h2c` handshake of RFC 7540 (removed in RFC 9113) is not
+offered. `Server.new(..., http2: false)` turns HTTP/2 off: the preface is
+then answered 400, as by an HTTP/1.1-only server.
+
+A handler sees the same Request and Response. Over HTTP/2:
+
+- `request.http_version` is `"HTTP/2"`, the `Host` header is taken from
+  `:authority` when the request has none, and several `cookie` fields are
+  joined with `; ` into one.
+- Response header names are sent lowercased, `Connection`, `Keep-Alive`,
+  `Transfer-Encoding` and `Upgrade` are left out, and each cookie is its
+  own `set-cookie` field.
+- A streaming response (`body_writer`, SSE) is sent as DATA frames and ends
+  its stream, not the connection. `Sink#socket` is the connection's socket,
+  shared by every stream: do not write to it. An upgrade (`upgrade!`, a
+  101) cannot be answered over HTTP/2 and becomes a 500.
+- The streams of one connection are answered one at a time, on the
+  connection's thread, in the order their requests became whole; frames
+  that arrive meanwhile are read and acted on. A slow handler or a
+  long-lived stream (SSE) holds back the other requests on its connection,
+  not those on other connections.
+
+Requests that break the protocol's rules for a request (an upper-case or
+connection-specific header name, a missing pseudo-header, a body that does
+not match its `content-length`) are reset with `PROTOCOL_ERROR`; frames
+that break the protocol end the connection with GOAWAY.
+
 ## Errors and status codes
 
 The server answers these itself and closes the connection:
@@ -129,6 +172,12 @@ exception, for an error page of your own. The server logs through the
 `logger:` you pass to `Server.new`, an `SpinelHttp::HttpLog` subclass; the
 default writes `level: message` lines to standard error.
 
+Over HTTP/2 the server answers 400, 413 and 408 on the stream instead, and
+the connection stays: 400 for a header list over `max_head_bytes`, 413 for
+a `content-length` or a body over `max_body_bytes`, 408 for a body not
+whole within `body_timeout`. A stream past `max_streams` is refused with
+`REFUSED_STREAM`.
+
 Known deviations from RFC 9112 and RFC 9110: an HTTP/1.1 request without a
 Host header is served (check Host in your handler if you rely on it), and
 `base_url` uses Host as sent; an oversized head is a 400, not a 431; a
@@ -144,6 +193,17 @@ decoded body over its limit is a 400, not a 413.
 | One uploaded file | 5 MiB | `SpinelHttp::Multipart.configure(max_upload_bytes, max_parts)` |
 | Parts in one multipart body | 128 | the same call |
 | Query and form parameters | 4096 pairs, 32 levels of nesting | fixed |
+| Streams open on one HTTP/2 connection | 100 | `Server.new(..., max_streams:)` |
+
+Over HTTP/2, `max_head_bytes` bounds a header block both as sent (HPACK
+compressed: past it the connection ends, since the block cannot be skipped)
+and decoded (a 400), and is advertised as `SETTINGS_MAX_HEADER_LIST_SIZE`.
+`max_body_bytes` bounds each request's body, and also the bodies the
+connection holds for requests waiting their turn, together: past that the
+server stops opening the connection's flow-control window until a request
+has been handled, so concurrent uploads on one connection that add up to
+more than `max_body_bytes` wait for each other, and may reach
+`body_timeout`.
 
 `Multipart.configure` and the `trusted_proxy` settings are module-level:
 call them once at boot, before the server starts.
@@ -166,6 +226,13 @@ the whole head and body, so a client that sends one byte every few seconds
 thread; one more is answered 503 and closed. Keep it below the process's
 descriptor limit (`ulimit -n`). These bound what one client can hold, not a
 flood of many: put a proxy in front of a server exposed to the internet.
+
+Over HTTP/2, `read_timeout` is the wait of an idle connection (then
+GOAWAY) and of each read, `head_timeout` bounds each frame and each header
+block with its CONTINUATION frames, `body_timeout` bounds each stream's
+body from its HEADERS (a 408 on that stream), and `stream_write_timeout`
+bounds each write and the wait for a client to open its flow-control
+window.
 
 ## One method name, one return type
 

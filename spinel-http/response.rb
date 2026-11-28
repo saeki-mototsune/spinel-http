@@ -407,6 +407,65 @@ module SpinelHttp
       out
     end
 
+    # Connection-specific header fields, which HTTP/2 forbids (RFC 9113
+    # section 8.2.2): #h2_fields leaves them out.
+    H2_CONNECTION_FIELDS = ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade"]
+
+    # The header list of this response for HTTP/2, as alternating names and
+    # values: `:status` first, then what #to_http writes (the default
+    # Content-Type, X-Content-Type-Options, X-Frame-Options and
+    # Permissions-Policy, Content-Length unless `streaming`, one set-cookie
+    # per cookie), every name lowercased (RFC 9113 section 8.2.1), and the
+    # connection-specific fields left out. A 304 has neither Content-Type
+    # nor Content-Length, as in #to_http. CR or LF in a header or cookie
+    # raises ArgumentError, as in #to_http.
+    # @param streaming [Boolean] the body is written by a {BodyWriter}
+    # @return [Array<String>]
+    # @api private
+    def h2_fields(streaming)
+      fields = Array.new(0) { "" }
+      fields << ":status"
+      fields << @status.to_s
+      not_modified = @status == 304
+      if !not_modified && header_key("content-type").nil?
+        fields << "content-type"
+        fields << DEFAULT_CONTENT_TYPE
+      end
+      @headers.each do |name, value|
+        lower = HeaderName.lower(name)
+        next if lower == "content-length" || H2_CONNECTION_FIELDS.include?(lower)
+        next if not_modified && lower == "content-type"
+
+        reject_crlf!(name, name)
+        reject_crlf!(name, value)
+        fields << lower
+        fields << value
+      end
+      if header_key("x-content-type-options").nil?
+        fields << "x-content-type-options"
+        fields << DEFAULT_NOSNIFF
+      end
+      if header_key("x-frame-options").nil?
+        fields << "x-frame-options"
+        fields << DEFAULT_FRAME_OPTIONS
+      end
+      policy = Response.default_permissions_policy
+      if !policy.empty? && header_key("permissions-policy").nil?
+        fields << "permissions-policy"
+        fields << policy
+      end
+      unless not_modified || streaming
+        fields << "content-length"
+        fields << @body.bytesize.to_s
+      end
+      @cookies.each do |cookie|
+        reject_crlf!("Set-Cookie", cookie)
+        fields << "set-cookie"
+        fields << cookie
+      end
+      fields
+    end
+
     private
 
     # The default Permissions-Policy line, unless the response set the

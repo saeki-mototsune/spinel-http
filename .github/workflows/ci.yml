@@ -44,8 +44,8 @@ jobs:
           spin test
 
       # The README's first ruby block is examples/hello/bin/hello.rb; it is
-      # built, answers a request, and exits 0 on TERM (run drains, then
-      # returns).
+      # built, answers a request over HTTP/1.1 and one over HTTP/2 (h2c with
+      # prior knowledge), and exits 0 on TERM (run drains, then returns).
       - name: Hello example
         run: |
           awk '/^```ruby$/ { inside = 1; next } /^```$/ && inside { exit } inside' README.md |
@@ -59,10 +59,12 @@ jobs:
             out=$(curl -fsS --max-time 5 http://127.0.0.1:18080/) && break
             sleep 0.5
           done
+          h2=$(curl -fsS --max-time 5 --http2-prior-knowledge -w ' %{http_version}' http://127.0.0.1:18080/)
           kill -TERM $server
           status=0
           wait $server || status=$?
           test "$out" = "hello" || { echo "unexpected output: '$out'"; exit 1; }
+          test "$h2" = "hello 2" || { echo "unexpected HTTP/2 output: '$h2'"; exit 1; }
           test "$status" = 0 || { echo "hello exited $status on TERM"; exit 1; }
 
   # The fork (saeki-mototsune/spinel), the fork's release tag.
@@ -99,8 +101,8 @@ jobs:
           spin test
 
       # The README's first ruby block is examples/hello/bin/hello.rb; it is
-      # built, answers a request, and exits 0 on TERM (run drains, then
-      # returns).
+      # built, answers a request over HTTP/1.1 and one over HTTP/2 (h2c with
+      # prior knowledge), and exits 0 on TERM (run drains, then returns).
       - name: Hello example
         run: |
           awk '/^```ruby$/ { inside = 1; next } /^```$/ && inside { exit } inside' README.md |
@@ -114,8 +116,10 @@ jobs:
             out=$(curl -fsS --max-time 5 http://127.0.0.1:18080/) && break
             sleep 0.5
           done
+          h2=$(curl -fsS --max-time 5 --http2-prior-knowledge -w ' %{http_version}' http://127.0.0.1:18080/)
           kill -TERM $server
           status=0
           wait $server || status=$?
           test "$out" = "hello" || { echo "unexpected output: '$out'"; exit 1; }
+          test "$h2" = "hello 2" || { echo "unexpected HTTP/2 output: '$h2'"; exit 1; }
           test "$status" = 0 || { echo "hello exited $status on TERM"; exit 1; }

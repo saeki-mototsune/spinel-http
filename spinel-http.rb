@@ -1,4 +1,4 @@
-# spinel-http: an HTTP/1.1 server and request/response library for Spinel.
+# spinel-http: an HTTP/1.1 and HTTP/2 server and request/response library for Spinel.
 #
 # `require "spinel-http"` loads the server and what it serves with:
 # SpinelHttp::Server, HttpHandler, Request, Response, Query, Params,
