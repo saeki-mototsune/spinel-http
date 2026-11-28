@@ -28,8 +28,9 @@ ok   PING is answered with its payload, and SETTINGS with an ACK
 ok   an idle connection gets GOAWAY after read_timeout
 ok   a body not whole within body_timeout is 408
 ok   stop sends GOAWAY to an idle connection, answers the request in flight, and drains
+ok   past GOAWAY, frames of a stream above its boundary are dropped and the open stream is still answered
 ok   a BodyWriter streams DATA frames and ends the stream; the connection stays
 ok   a writer's wait_closed sees the client reset its stream
 ok   HTTP/1.1 is served as before on a server with http2
 ok   with http2: false the preface is a 400
-34 tests, 122 assertions, 0 failures
+35 tests, 126 assertions, 0 failures

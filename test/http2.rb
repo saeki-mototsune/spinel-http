@@ -818,6 +818,26 @@ test "stop sends GOAWAY to an idle connection, answers the request in flight, an
   c.close
 end
 
+test "past GOAWAY, frames of a stream above its boundary are dropped and the open stream is still answered" do
+  server = h2_server
+  c = h2_client(server)
+  c.headers(1, [":method", "POST", ":scheme", "http", ":path", "/echo", ":authority", "test"], false)
+  server.request_stop
+  # wakes the session, which then sees the stop and sends GOAWAY (last stream 1)
+  c.frame(H2::PING, 0, 0, "wake-up!")
+  assert_equal H2::NO_ERROR, c.until_goaway(3)
+  c.headers(3, [":method", "POST", ":scheme", "http", ":path", "/echo", ":authority", "test"], false)
+  c.frame(H2::DATA, 0, 3, "late")
+  c.frame(H2::WINDOW_UPDATE, 0, 3, H2.u32_bytes(10))
+  c.frame(H2::DATA, 1, 1, "kept")
+  r = c.exchange(1)
+  assert_equal "kept", r.body
+  assert_equal -1, r.goaway_code
+  server.stop
+  assert_equal 0, server.open_connections
+  c.close
+end
+
 # ---- streaming ----
 
 test "a BodyWriter streams DATA frames and ends the stream; the connection stays" do

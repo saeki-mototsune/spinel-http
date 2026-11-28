@@ -455,7 +455,7 @@ module SpinelHttp
       policy = Response.default_permissions_policy
       if !policy.empty? && header_key("permissions-policy").nil?
         fields << "permissions-policy"
-        fields << policy
+        fields << Response.h2_trim(policy)
       end
       unless not_modified || streaming || @status == 204
         fields << "content-length"

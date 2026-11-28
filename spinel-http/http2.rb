@@ -330,7 +330,11 @@ module SpinelHttp
 
         left = deadline - h2_now
         return false if left <= 0.0
-        return false unless h2_fill(left)
+
+        wait = h2_bounded(left)
+        # a wait cut short by a head deadline loops: h2_process_buffered
+        # then refuses the frame or the block
+        return false unless h2_fill(wait) || wait < left
       end
     rescue Http2Error => e
       h2_goaway_quietly(e.h2_code, e.message)
@@ -468,7 +472,26 @@ module SpinelHttp
         @rpos = 0
       end
       @buf << @sock.readpartial(READ_CHUNK)
+      # the first bytes of a frame start its head_timeout, whichever read
+      # took them in (h2_wait, or one made while a response is written)
+      @frame_deadline = h2_now + @limits.h2_head_timeout if @frame_deadline == 0.0 && @buf.bytesize > @rpos
       true
+    end
+
+    # `left` seconds, or less when a frame or a header block that has begun
+    # must be whole sooner: the reads made while a response is written wait
+    # no longer than head_timeout allows.
+    def h2_bounded(left)
+      wait = left
+      if @block_stream != 0
+        d = @block_deadline - h2_now
+        wait = d if d < wait
+      end
+      if @frame_deadline > 0.0
+        d = @frame_deadline - h2_now
+        wait = d if d < wait
+      end
+      wait < 0.0 ? 0.0 : wait
     end
 
     # The earliest deadline of a stream still receiving its body, 0.0 when
@@ -558,7 +581,9 @@ module SpinelHttp
 
       stream = @streams[id]
       if stream.nil?
-        raise Http2Error.new(PROTOCOL_ERROR, "DATA on idle stream #{id}") if id > @last_stream_id
+        # past a GOAWAY a stream above its boundary was never taken: what
+        # is in flight for it is dropped (section 6.8), not an error
+        raise Http2Error.new(PROTOCOL_ERROR, "DATA on idle stream #{id}") if id > @last_stream_id && !@goaway_sent
 
         # a stream already answered or reset: dropped (section 5.1)
         h2_credit_connection(len)
@@ -781,7 +806,7 @@ module SpinelHttp
       id = @f_stream
       raise Http2Error.new(PROTOCOL_ERROR, "RST_STREAM on stream 0") if id == 0
       raise Http2Error.new(FRAME_SIZE_ERROR, "RST_STREAM of #{@f_payload.bytesize} bytes") if @f_payload.bytesize != 4
-      raise Http2Error.new(PROTOCOL_ERROR, "RST_STREAM on idle stream #{id}") if id > @last_stream_id
+      raise Http2Error.new(PROTOCOL_ERROR, "RST_STREAM on idle stream #{id}") if id > @last_stream_id && !@goaway_sent
 
       stream = @streams[id]
       return nil if stream.nil?
@@ -870,7 +895,7 @@ module SpinelHttp
       end
       stream = @streams[id]
       if stream.nil?
-        raise Http2Error.new(PROTOCOL_ERROR, "WINDOW_UPDATE on idle stream #{id}") if id > @last_stream_id
+        raise Http2Error.new(PROTOCOL_ERROR, "WINDOW_UPDATE on idle stream #{id}") if id > @last_stream_id && !@goaway_sent
 
         return nil
       end
@@ -1210,7 +1235,7 @@ module SpinelHttp
         left = deadline - h2_now
         raise Http2Closed, "no WINDOW_UPDATE within stream_write_timeout" if left <= 0.0
 
-        h2_fill(left)
+        h2_fill(h2_bounded(left))
       end
       nil
     end
