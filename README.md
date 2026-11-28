@@ -198,12 +198,12 @@ decoded body over its limit is a 400, not a 413.
 Over HTTP/2, `max_head_bytes` bounds a header block both as sent (HPACK
 compressed: past it the connection ends, since the block cannot be skipped)
 and decoded (a 400), and is advertised as `SETTINGS_MAX_HEADER_LIST_SIZE`.
-`max_body_bytes` bounds each request's body, and also the bodies the
-connection holds for requests waiting their turn, together: past that the
-server stops opening the connection's flow-control window until a request
-has been handled, so concurrent uploads on one connection that add up to
-more than `max_body_bytes` wait for each other, and may reach
-`body_timeout`.
+`max_body_bytes` bounds each request's body. The server reopens the
+flow-control window as soon as it has read the bytes, so concurrent uploads
+on one connection do not wait for each other; the bodies one connection
+holds for requests waiting their turn can therefore reach `max_streams`
+times `max_body_bytes` (about 1 GiB with the defaults). Lower `max_streams`
+or `max_body_bytes` where that is too much memory for one client.
 
 `Multipart.configure` and the `trusted_proxy` settings are module-level:
 call them once at boot, before the server starts.

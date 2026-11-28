@@ -137,10 +137,9 @@ module SpinelHttp
   #
   # Limits: at most `max_streams` streams open at once (more are refused
   # with REFUSED_STREAM); a header block at most max_head_bytes compressed
-  # and as a header list (400 past it); a body at most max_body_bytes (413);
-  # the bodies buffered for requests not yet handled at most max_body_bytes
-  # together (the connection window is not reopened past that until a
-  # request is handled); a frame, and a header block with its
+  # and as a header list (400 past it); a body at most max_body_bytes (413),
+  # so the bodies buffered on one connection at most max_streams times that;
+  # a frame, and a header block with its
   # CONTINUATIONs, whole within head_timeout of its first byte; a body
   # within body_timeout of its HEADERS (408); a write within
   # stream_write_timeout; an idle connection closed after read_timeout.
@@ -216,10 +215,6 @@ module SpinelHttp
       @peer_max_frame = MAX_FRAME
       @send_window = DEFAULT_WINDOW
       @recv_window = DEFAULT_WINDOW
-      # body bytes held for requests not yet handled, and the connection
-      # window held back while they are over max_body_bytes
-      @buffered = 0
-      @owed = 0
       @goaway_sent = false
       @peer_goaway = false
       @settings_seen = false
@@ -622,14 +617,10 @@ module SpinelHttp
         return nil
       end
       stream.h2_body << data
-      @buffered += data.bytesize
-      # padding is credited at once; the data once there is room for it
-      h2_credit_connection(len - data.bytesize)
-      if @buffered <= @limits.h2_max_body_bytes
-        h2_credit_connection(data.bytesize)
-      else
-        @owed += data.bytesize
-      end
+      # the connection window is reopened as soon as the bytes are read:
+      # each body is bounded by max_body_bytes, so a connection holds at
+      # most max_streams of them
+      h2_credit_connection(len)
       if end_stream
         if stream.h2_content_length >= 0 && stream.h2_received != stream.h2_content_length
           h2_reset(id, PROTOCOL_ERROR)
@@ -1122,19 +1113,9 @@ module SpinelHttp
       nil
     end
 
-    # The body held for `stream` no longer counts against the connection's
-    # budget; the window held back is given back once there is room.
+    # Drops the body held for `stream` (dispatched, refused or reset).
     def h2_release_body(stream)
-      held = stream.h2_body.bytesize
-      return nil if held == 0
-
-      stream.h2_body = +""
-      @buffered -= held
-      if @owed > 0 && @buffered <= @limits.h2_max_body_bytes
-        owed = @owed
-        @owed = 0
-        h2_credit_connection(owed)
-      end
+      stream.h2_body = +"" unless stream.h2_body.empty?
       nil
     end
 

@@ -12,11 +12,11 @@
   turns it off.
 - `max_streams:` (default 100) caps the streams open on one HTTP/2
   connection. The existing limits and timeouts apply to HTTP/2 too:
-  `max_head_bytes` to header blocks, `max_body_bytes` to each body and to
-  the bodies buffered on a connection, `head_timeout` to each frame and
-  header block, `body_timeout` to each stream's body, `read_timeout` to an
-  idle connection, `stream_write_timeout` to writes and to the wait for
-  WINDOW_UPDATE.
+  `max_head_bytes` to header blocks, `max_body_bytes` to each body (so a
+  connection buffers at most `max_streams` of them), `head_timeout` to
+  each frame and header block, `body_timeout` to each stream's body,
+  `read_timeout` to an idle connection, `stream_write_timeout` to writes
+  and to the wait for WINDOW_UPDATE.
 - `Response#h2_fields`, the header list of a response for HTTP/2.
 
 ## 0.2.0
