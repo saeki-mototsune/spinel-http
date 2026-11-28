@@ -1,6 +1,7 @@
 require "spinel-http/header_name"
 require "spinel-http/body_writer"
 require "spinel-http/log"
+require "spinel-http/parser"
 
 module SpinelHttp
   # The response a handler builds for a request; the Server serializes it
@@ -409,7 +410,7 @@ module SpinelHttp
 
     # Connection-specific header fields, which HTTP/2 forbids (RFC 9113
     # section 8.2.2): #h2_fields leaves them out.
-    H2_CONNECTION_FIELDS = ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade"]
+    H2_CONNECTION_FIELDS = ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te"]
 
     # The header list of this response for HTTP/2, as alternating names and
     # values: `:status` first, then what #to_http writes (the default
@@ -417,8 +418,11 @@ module SpinelHttp
     # Permissions-Policy, Content-Length unless `streaming`, one set-cookie
     # per cookie), every name lowercased (RFC 9113 section 8.2.1), and the
     # connection-specific fields left out. A 304 has neither Content-Type
-    # nor Content-Length, as in #to_http. CR or LF in a header or cookie
-    # raises ArgumentError, as in #to_http.
+    # nor Content-Length, as in #to_http, and a 204 no Content-Length
+    # (RFC 9110 section 8.6). Values are sent without the spaces and tabs
+    # at either end, which HTTP/2 forbids there. CR, LF or NUL in a header
+    # or cookie, or a name that is not a token, raises ArgumentError, as CR
+    # and LF do in #to_http.
     # @param streaming [Boolean] the body is written by a {BodyWriter}
     # @return [Array<String>]
     # @api private
@@ -436,10 +440,9 @@ module SpinelHttp
         next if lower == "content-length" || H2_CONNECTION_FIELDS.include?(lower)
         next if not_modified && lower == "content-type"
 
-        reject_crlf!(name, name)
-        reject_crlf!(name, value)
+        h2_check_field!(name, lower, value)
         fields << lower
-        fields << value
+        fields << Response.h2_trim(value)
       end
       if header_key("x-content-type-options").nil?
         fields << "x-content-type-options"
@@ -452,21 +455,53 @@ module SpinelHttp
       policy = Response.default_permissions_policy
       if !policy.empty? && header_key("permissions-policy").nil?
         fields << "permissions-policy"
-        fields << policy
+        fields << Response.h2_trim(policy)
       end
-      unless not_modified || streaming
+      unless not_modified || streaming || @status == 204
         fields << "content-length"
         fields << @body.bytesize.to_s
       end
       @cookies.each do |cookie|
-        reject_crlf!("Set-Cookie", cookie)
+        h2_check_field!("Set-Cookie", "set-cookie", cookie)
         fields << "set-cookie"
-        fields << cookie
+        fields << Response.h2_trim(cookie)
       end
       fields
     end
 
+    # Whether the status has no content (RFC 9110 sections 15.3.5 and
+    # 15.4.5): over HTTP/2 the response ends with its HEADERS.
+    # @api private
+    def h2_bodyless?
+      @status == 204 || @status == 304
+    end
+
+    # `text` without the spaces and tabs at either end.
+    # @api private
+    def self.h2_trim(text)
+      s = text.to_s # NOTES.md rule 3
+      first = 0
+      last = s.bytesize
+      first += 1 while first < last && (s.getbyte(first) == 32 || s.getbyte(first) == 9)
+      last -= 1 while last > first && (s.getbyte(last - 1) == 32 || s.getbyte(last - 1) == 9)
+      return s if first == 0 && last == s.bytesize
+
+      s.byteslice(first, last - first)
+    end
+
     private
+
+    # A field #h2_fields is about to send: CR, LF or NUL in its name or
+    # value, or a name that is not a token, raises ArgumentError.
+    def h2_check_field!(name, lower, value)
+      reject_crlf!(name, name)
+      reject_crlf!(name, value)
+      shown = name.inspect
+      raise ArgumentError, "header #{shown} must be a token" unless HttpParser.field_name_token?(lower)
+      raise ArgumentError, "header #{shown} must not contain NUL" if HttpParser.control_byte_index(value) >= 0
+
+      nil
+    end
 
     # The default Permissions-Policy line, unless the response set the
     # header or the default is "".

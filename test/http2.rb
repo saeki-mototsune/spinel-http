@@ -167,6 +167,10 @@ class H2Client
         flags = f.frame_flags
         while (flags & 4) == 0
           c = next_frame(seconds)
+          if c.frame_type == H2Frame::TIMED_OUT || c.frame_type == H2Frame::CLOSED
+            raise SpinelHttpAssertionFailed, "the header block of stream #{f.frame_stream} did not end"
+          end
+
           block << c.frame_payload
           flags = c.frame_flags
         end
@@ -301,6 +305,21 @@ class H2App < SpinelHttp::HttpHandler
       res.body = "big header"
     when "/notmodified"
       res.status = 304
+      res.body = "never sent"
+    when "/nocontent"
+      res.status = 204
+      res.body = "never sent"
+    when "/notmodified_stream"
+      res.status = 304
+      res.body_writer = TwoChunks.new
+    when "/fields"
+      res.content_type = "text/plain; charset=utf-8"
+      res.set_header("X-Label", " ready\t")
+      res.set_header("X-Name", "café")
+      res.set_header("TE", "trailers")
+      res.body = "é" * 100
+    when "/nul"
+      res.headers["X-Nul"] = "a" + 0.chr + "b"
       res.body = "never sent"
     when "/stream"
       res.body_writer = TwoChunks.new
@@ -480,6 +499,21 @@ test "HEAD and 304 have headers and no DATA" do
   assert_equal "304", r.status
   assert_equal "", r.header("content-length")
   assert_equal 0, r.data_frames
+  c.get(5, "/nocontent")
+  r = c.exchange(5)
+  assert_equal "204", r.status
+  assert_equal "", r.header("content-length")
+  assert_equal 0, r.data_frames
+  c.get(7, "/notmodified_stream")
+  r = c.exchange(7)
+  assert_equal "304", r.status
+  assert_equal 0, r.data_frames
+  c.headers(9, [":method", "HEAD", ":scheme", "http", ":path", "/stream", ":authority", "test"], true)
+  r = c.exchange(9)
+  assert_equal "200", r.status
+  assert_equal "", r.header("content-length")
+  assert_equal 0, r.data_frames
+  assert_equal 0, r.data_frames
   c.close
   server.stop
 end
@@ -494,6 +528,21 @@ test "cookies are joined with '; ', set-cookie is one field each, connection-spe
   assert_includes r.lines, "set-cookie: a=1"
   assert_includes r.lines, "set-cookie: b=2"
   assert_equal "", r.header("connection")
+  c.close
+  server.stop
+end
+
+test "values are trimmed, te is dropped, and non-ASCII values and bodies are sent as bytes" do
+  server = h2_server
+  c = h2_client(server)
+  c.get(1, "/fields")
+  r = c.exchange(1)
+  assert_equal "200", r.status
+  assert_includes r.lines, "x-label: ready"
+  assert_equal "", r.header("te")
+  assert_equal "café", r.header("x-name").force_encoding("UTF-8")
+  assert_equal 200, r.body.bytesize
+  assert_equal "200", r.header("content-length")
   c.close
   server.stop
 end
@@ -544,10 +593,16 @@ test "an exception is a 500, a client fault a 400, and the connection stays" do
   r = c.exchange(5)
   assert_equal "500", r.status
   assert_equal "", r.header("x-bad")
-  c.get(7, "/upgrade")
-  assert_equal "500", c.exchange(7).status
-  c.get(9, "/hello")
-  assert_equal "hi", c.exchange(9).body
+  assert_equal "Internal Server Error", r.body
+  assert_equal r.body.bytesize.to_s, r.header("content-length")
+  c.get(7, "/nul")
+  r = c.exchange(7)
+  assert_equal "500", r.status
+  assert_equal "Internal Server Error", r.body
+  c.get(9, "/upgrade")
+  assert_equal "500", c.exchange(9).status
+  c.get(11, "/hello")
+  assert_equal "hi", c.exchange(11).body
   assert_logged $log.string, "ERROR", "response not written: an upgrade (101) cannot be answered over HTTP/2"
   c.close
   server.stop
@@ -598,8 +653,16 @@ test "malformed requests are reset with PROTOCOL_ERROR" do
   assert_equal H2::PROTOCOL_ERROR, c.exchange(11).rst_code
   c.headers(13, [":method", "GET", ":scheme", "http", ":path", "/", ":authority", "a", "host", "b"], true)
   assert_equal H2::PROTOCOL_ERROR, c.exchange(13).rst_code
-  c.get(15, "/hello")
-  assert_equal "hi", c.exchange(15).body
+  # a second :method, after an empty first one
+  c.headers(17, [":method", "", ":method", "GET", ":scheme", "http", ":path", "/"], true)
+  assert_equal H2::PROTOCOL_ERROR, c.exchange(17).rst_code
+  # trailers with a connection-specific field
+  c.headers(19, [":method", "POST", ":scheme", "http", ":path", "/echo"], false)
+  c.frame(H2::DATA, 0, 19, "x")
+  c.headers(19, ["connection", "close"], true)
+  assert_equal H2::PROTOCOL_ERROR, c.exchange(19).rst_code
+  c.get(21, "/hello")
+  assert_equal "hi", c.exchange(21).body
   c.close
   server.stop
 end
@@ -739,6 +802,7 @@ test "stop sends GOAWAY to an idle connection, answers the request in flight, an
   c.get(1, "/hello")
   assert_equal "hi", c.exchange(1).body
   server.stop
+  assert_equal H2::NO_ERROR, c.until_goaway(1)
   assert c.closed_by_server?
   assert_equal 0, server.open_connections
   c.close
@@ -749,6 +813,26 @@ test "stop sends GOAWAY to an idle connection, answers the request in flight, an
   server.request_stop
   r = c.exchange(1)
   assert_equal "slow", r.body
+  server.stop
+  assert_equal 0, server.open_connections
+  c.close
+end
+
+test "past GOAWAY, frames of a stream above its boundary are dropped and the open stream is still answered" do
+  server = h2_server
+  c = h2_client(server)
+  c.headers(1, [":method", "POST", ":scheme", "http", ":path", "/echo", ":authority", "test"], false)
+  server.request_stop
+  # wakes the session, which then sees the stop and sends GOAWAY (last stream 1)
+  c.frame(H2::PING, 0, 0, "wake-up!")
+  assert_equal H2::NO_ERROR, c.until_goaway(3)
+  c.headers(3, [":method", "POST", ":scheme", "http", ":path", "/echo", ":authority", "test"], false)
+  c.frame(H2::DATA, 0, 3, "late")
+  c.frame(H2::WINDOW_UPDATE, 0, 3, H2.u32_bytes(10))
+  c.frame(H2::DATA, 1, 1, "kept")
+  r = c.exchange(1)
+  assert_equal "kept", r.body
+  assert_equal -1, r.goaway_code
   server.stop
   assert_equal 0, server.open_connections
   c.close
@@ -775,7 +859,7 @@ test "a writer's wait_closed sees the client reset its stream" do
   c = h2_client(server)
   c.get(1, "/wait")
   f = c.next_frame
-  f = c.next_frame while f.frame_type != H2::DATA && f.frame_type != H2Frame::TIMED_OUT
+  f = c.next_frame while f.frame_type != H2::DATA && f.frame_type != H2Frame::TIMED_OUT && f.frame_type != H2Frame::CLOSED
   assert_equal "data: hi\n\n", f.frame_payload
   c.frame(H2::RST_STREAM, 0, 1, H2.u32_bytes(H2::CANCEL))
   c.get(3, "/hello")

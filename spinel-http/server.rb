@@ -84,6 +84,9 @@ module SpinelHttp
     class Connection
       attr_reader :sock, :first_request_grace_end
       attr_accessor :id, :idle, :streaming, :awaiting_first_request
+      # The head_timeout deadline first_bytes started while it read the
+      # first bytes, for the first head (0.0 when none was started).
+      attr_accessor :sniff_deadline
 
       def initialize(sock)
         @id = 0
@@ -98,6 +101,7 @@ module SpinelHttp
         # Set while a BodyWriter runs on it: the drain shuts its read side
         # so the writer sees the end (Sink#closed?) and returns.
         @streaming = false
+        @sniff_deadline = 0.0
       end
     end
 
@@ -684,8 +688,10 @@ module SpinelHttp
       end
       while true
         idx = buf.byteindex(HttpParser::HEAD_END)
-        # 0.0 until the head's first byte is here (a pipelined head's is)
-        head_deadline = 0.0
+        # 0.0 until the head's first byte is here (a pipelined head's is);
+        # the first head keeps the deadline first_bytes started
+        head_deadline = conn.sniff_deadline
+        conn.sniff_deadline = 0.0
         while idx.nil?
           raise Rejected.new(400) if buf.bytesize > @max_head_bytes
 
@@ -759,7 +765,10 @@ module SpinelHttp
         else
           return got unless Http2Session::PREFACE.start_with?(got)
 
-          deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @head_timeout if deadline == 0.0
+          if deadline == 0.0
+            deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @head_timeout
+            conn.sniff_deadline = deadline
+          end
           return "" unless readable_before?(sock, deadline)
         end
         got << sock.readpartial(READ_CHUNK)

@@ -251,6 +251,13 @@ module SpinelHttp
       out
     end
 
+    # A new String with the bytes of `text`.
+    def self.copy_of(text)
+      out = +""
+      out << text
+      out
+    end
+
     # `text` as a string literal without Huffman coding.
     def self.string_bytes(text)
       s = text.to_s # NOTES.md rule 3
@@ -363,8 +370,9 @@ module SpinelHttp
         if list_bytes > max_list_bytes
           @oversized = true
         else
-          fields << name
-          fields << value
+          # copies: a caller that edits a field must not edit the tables
+          fields << Hpack.copy_of(name)
+          fields << Hpack.copy_of(value)
         end
       end
       @block = ""
@@ -395,6 +403,11 @@ module SpinelHttp
       shift = 0
       while true
         raise HpackError, "truncated integer" if @pos >= n
+
+        # MAX_INTEGER fits in 24 bits: a fifth continuation byte (a shift
+        # past 28) can only be over it, or a run of zero bytes that would
+        # push the shift past the word.
+        raise HpackError, "integer too long" if shift > 28
 
         b = s.getbyte(@pos)
         @pos += 1
