@@ -235,6 +235,7 @@ module SpinelHttp
       @f_flags = 0
       @f_stream = 0
       @f_payload = ""
+      @fields_refused = false
     end
 
     # Serves the connection until it ends. The rescue arms are here, in a
@@ -371,11 +372,26 @@ module SpinelHttp
       end
     end
 
-    # Acts on each whole frame in the buffer.
+    # Acts on each whole frame in the buffer. A frame or a header block past
+    # head_timeout is refused here too, so the reads made while a response
+    # is written (waiting for WINDOW_UPDATE, Http2Sink#wait_closed) keep the
+    # deadlines that h2_wait keeps.
     def h2_process_buffered
+      h2_check_head_deadlines
       while h2_take_frame
         h2_frame
+        h2_check_head_deadlines
       end
+      nil
+    end
+
+    def h2_check_head_deadlines
+      return nil if @block_stream == 0 && @frame_deadline == 0.0
+
+      now = h2_now
+      raise Http2Error.new(ENHANCE_YOUR_CALM, "header block not whole within head_timeout") if @block_stream != 0 && now >= @block_deadline
+      raise Http2Error.new(ENHANCE_YOUR_CALM, "frame not whole within head_timeout") if @frame_deadline > 0.0 && now >= @frame_deadline
+
       nil
     end
 
@@ -410,10 +426,23 @@ module SpinelHttp
       # Idle: marked for the drain, which ends the wait when the server
       # stops (Server#shut_idle_connections).
       @conn.idle = true
-      ready = (@server.h2_running? || @conn.awaiting_first_request) && h2_fill(@limits.h2_read_wait)
+      ready = (@server.h2_running? || @conn.awaiting_first_request) && h2_idle_fill
       @conn.idle = false
       h2_goaway(NO_ERROR, "") unless ready || @goaway_sent
       ready
+    end
+
+    # The idle wait. The drain ends it by shutting the read side, which
+    # reads as EOF: with the server stopping, that is the stop, answered
+    # with GOAWAY while the write side is still open (false); with the
+    # server running, the client went away, and the EOF goes on to
+    # Server#serve, which closes quietly.
+    def h2_idle_fill
+      h2_fill(@limits.h2_read_wait)
+    rescue EOFError
+      raise if @server.h2_running?
+
+      false
     end
 
     # A wait for a frame or a header block that ran out: past its deadline
@@ -618,6 +647,8 @@ module SpinelHttp
       fragment = payload.byteslice(pos, payload.bytesize - pos - pad)
       end_stream = (flags & FLAG_END_STREAM) != 0
       if (flags & FLAG_END_HEADERS) != 0
+        # one frame is at most MAX_FRAME; its list is held to
+        # max_head_bytes by the decoder (a 400)
         h2_header_block(id, fragment, end_stream)
       else
         @block_stream = id
@@ -639,8 +670,8 @@ module SpinelHttp
       raise Http2Error.new(PROTOCOL_ERROR, "a stream that depends on itself must not continue") if (flags & FLAG_END_HEADERS) == 0
 
       @decoder.hpack_decode(payload.byteslice(pos, payload.bytesize - pos - pad), @limits.h2_max_head_bytes)
-      @last_stream_id = id if id > @last_stream_id && (id & 1) == 1
-      h2_send_rst(id, PROTOCOL_ERROR)
+      @last_stream_id = id if id > @last_stream_id && (id & 1) == 1 && !@goaway_sent
+      h2_reset(id, PROTOCOL_ERROR)
       nil
     end
 
@@ -679,7 +710,7 @@ module SpinelHttp
           h2_reset(id, STREAM_CLOSED) unless stream.h2_reset
           return nil
         end
-        unless end_stream && Http2Session.trailers_valid?(fields)
+        unless end_stream && !@decoder.hpack_oversized? && Http2Session.trailers_valid?(fields)
           h2_reset(id, PROTOCOL_ERROR)
           return nil
         end
@@ -697,10 +728,11 @@ module SpinelHttp
       raise Http2Error.new(PROTOCOL_ERROR, "stream #{id} is a server's") if (id & 1) == 0
       # a stream already answered or reset: dropped (section 5.1)
       return nil if id <= @last_stream_id
+      # past a GOAWAY new streams are not processed (section 6.8), and the
+      # last stream id it named stays the boundary
+      return nil if @goaway_sent
 
       @last_stream_id = id
-      # past a GOAWAY new streams are not processed (section 6.8)
-      return nil if @goaway_sent
 
       if @streams.size >= @limits.h2_max_streams
         h2_send_rst(id, REFUSED_STREAM)
@@ -864,6 +896,7 @@ module SpinelHttp
       authority = ""
       path = ""
       has_authority = false
+      seen = 0
       regular = false
       i = 0
       while i < fields.size
@@ -875,27 +908,29 @@ module SpinelHttp
         if name.start_with?(":")
           return false if regular
 
+          # `seen`: a bit per pseudo-header, so a second one is refused
+          # even when the first was empty
+          bit = 0
           case name
           when ":method"
-            return false unless method.empty?
-
+            bit = 1
             method = value
           when ":scheme"
-            return false unless scheme.empty?
-
+            bit = 2
             scheme = value
           when ":path"
-            return false unless path.empty?
-
+            bit = 4
             path = value
           when ":authority"
-            return false if has_authority
-
+            bit = 8
             has_authority = true
             authority = value
           else
             return false
           end
+          return false if (seen & bit) != 0
+
+          seen |= bit
           next
         end
         regular = true
@@ -958,7 +993,8 @@ module SpinelHttp
 
       status = stream.h2_reject_status
       if status != 0
-        h2_respond(stream, @server.h2_error_response(status), false)
+        refusal = @server.h2_error_response(status)
+        h2_respond(stream, h2_fields_of(refusal, false), refusal.body)
         return nil
       end
       body = stream.h2_body
@@ -972,20 +1008,26 @@ module SpinelHttp
         response = @server.h2_error_response(500)
       end
       writer = response.body_writer
-      head_only = request.head?
-      if writer.nil? || head_only
-        h2_respond(stream, response, head_only)
+      # A HEAD answer to a stream has the stream's head (no content-length).
+      fields = h2_fields_of(response, !writer.nil?)
+      if @fields_refused
+        # the 500 that replaced it: its own body, and no writer runs
+        response = @server.h2_error_response(500)
+        writer = nil
+      end
+      # HEAD, 204 and 304 end with their HEADERS, whatever body or writer
+      # the handler set.
+      bodyless = request.head? || response.h2_bodyless?
+      if writer.nil? || bodyless
+        h2_respond(stream, fields, bodyless ? "" : response.body)
       else
-        h2_respond_streaming(stream, response, writer)
+        h2_respond_streaming(stream, fields, response, writer)
       end
       nil
     end
 
-    # A whole response: HEADERS, then the body in DATA frames.
-    def h2_respond(stream, response, head_only)
-      fields = h2_fields_of(response, false)
-      body = response.body
-      body = "" if head_only || response.status == 304
+    # A whole response: HEADERS, then `body` in DATA frames.
+    def h2_respond(stream, fields, body)
       return nil unless h2_send_headers(stream, fields, body.empty?)
 
       h2_send_data(stream, body, true) unless body.empty?
@@ -996,8 +1038,7 @@ module SpinelHttp
     # A streaming response: HEADERS, then the writer on this thread with an
     # Http2Sink, then END_STREAM (Http2Sink#sink_finish, from the Server's
     # run_writer_scoped when the writer did not fail).
-    def h2_respond_streaming(stream, response, writer)
-      fields = h2_fields_of(response, true)
+    def h2_respond_streaming(stream, fields, response, writer)
       return nil unless h2_send_headers(stream, fields, false)
 
       sink = Http2Sink.new(self, stream.h2_id, @sock, @limits.h2_write_timeout)
@@ -1013,12 +1054,15 @@ module SpinelHttp
     end
 
     # The response's header list, or a 500's when Response#h2_fields refuses
-    # it (CR or LF stored past set_header). A plain method for the rescue
-    # (NOTES.md rule 11).
+    # it (CR, LF or NUL stored past set_header); @fields_refused tells the
+    # caller, which then answers the 500's body. A plain method for the
+    # rescue (NOTES.md rule 11).
     def h2_fields_of(response, streaming)
+      @fields_refused = false
       response.h2_fields(streaming)
     rescue ArgumentError => e
       @logger.error("response not written: #{e.message}")
+      @fields_refused = true
       @server.h2_error_response(500).h2_fields(false)
     end
 
@@ -1032,9 +1076,13 @@ module SpinelHttp
       nil
     end
 
+    # A stream whose request waited its turn leaves the queue too, so a
+    # client that completes and resets streams while a response is being
+    # written does not grow it.
     def h2_forget(stream)
       h2_release_body(stream)
       @streams.delete(stream.h2_id)
+      @ready.delete(stream.h2_id)
       nil
     end
 
@@ -1317,6 +1365,7 @@ module SpinelHttp
       while i < fields.size
         name = fields[i]
         return false if name.start_with?(":") || !Http2Session.field_name?(name) || !Http2Session.field_value?(fields[i + 1])
+        return false if CONNECTION_FIELDS.include?(name) || name == "te"
 
         i += 2
       end

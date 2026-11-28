@@ -89,8 +89,9 @@ test "an index past the tables, index 0 and a truncated block are errors" do
   assert_raises(SpinelHttp::HpackError) { d.hpack_decode(unhex("80"), 65_536) }
   assert_raises(SpinelHttp::HpackError) { d.hpack_decode(unhex("400a6375"), 65_536) }
   assert_raises(SpinelHttp::HpackError) { d.hpack_decode(unhex("ff"), 65_536) }
-  # an integer past the limit
+  # an integer past the limit, and one padded with zero continuation bytes
   assert_raises(SpinelHttp::HpackError) { d.hpack_decode(unhex("ffffffffff0f"), 65_536) }
+  assert_raises(SpinelHttp::HpackError) { d.hpack_decode(unhex("ff808080808080808080808001"), 65_536) }
 end
 
 test "a table size update must come first and stay within the limit" do
@@ -139,6 +140,14 @@ test "integers past one byte, and a long value, round-trip" do
   fields = d.hpack_decode(e.hpack_encode(["x-long", long, "set-cookie", "a=1", "set-cookie", "b=2"]), 65_536)
   assert_equal 300, fields[1].bytesize
   assert_equal ["set-cookie: a=1", "set-cookie: b=2"], lines_of(fields)[1, 2]
+end
+
+test "a decoded field is a copy: editing it leaves the table as sent" do
+  d = SpinelHttp::HpackDecoder.new(4096)
+  first = d.hpack_decode(unhex("400a637573746f6d2d6b65790c637573746f6d2d76616c7565"), 65_536)
+  first[1] << "-edited"
+  again = d.hpack_decode(unhex("be"), 65_536)
+  assert_equal "custom-value", again[1]
 end
 
 SpinelHttpTest.summary

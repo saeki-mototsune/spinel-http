@@ -8,6 +8,7 @@ ok   a response header block past the frame size goes out in CONTINUATION
 ok   a request header block in HEADERS and CONTINUATION is read whole
 ok   HEAD and 304 have headers and no DATA
 ok   cookies are joined with '; ', set-cookie is one field each, connection-specific fields are dropped
+ok   values are trimmed, te is dropped, and non-ASCII values and bodies are sent as bytes
 ok   trailers end a request
 ok   a padded DATA and a padded, prioritized HEADERS are read
 ok   an exception is a 500, a client fault a 400, and the connection stays
@@ -31,4 +32,4 @@ ok   a BodyWriter streams DATA frames and ends the stream; the connection stays
 ok   a writer's wait_closed sees the client reset its stream
 ok   HTTP/1.1 is served as before on a server with http2
 ok   with http2: false the preface is a 400
-33 tests, 100 assertions, 0 failures
+34 tests, 122 assertions, 0 failures
