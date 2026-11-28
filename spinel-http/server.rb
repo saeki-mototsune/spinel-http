@@ -8,6 +8,7 @@ require "spinel-http/body_writer"
 require "spinel-http/client_error"
 require "spinel-http/stream_failure"
 require "spinel-http/log"
+require "spinel-http/http2"
 
 module SpinelHttp
   # Raised by Server#start when the listener cannot bind: another process
@@ -48,7 +49,9 @@ module SpinelHttp
 
   # A pure-Ruby HTTP/1.1 server: one TCPServer, one green thread per
   # connection, keep-alive and pipelining, and an HttpHandler that turns each
-  # Request into a Response. A framework on top passes its own handler (one
+  # Request into a Response. A connection that opens with the HTTP/2
+  # preface is served as HTTP/2 instead (h2c with prior knowledge, by an
+  # {Http2Session} on the same thread) unless http2: false. A framework on top passes its own handler (one
   # that runs its middleware stack, say); the HTTP layer itself knows only
   # HttpHandler.
   #
@@ -148,13 +151,20 @@ module SpinelHttp
     # either it gets 408 and the connection closes.
     # max_connections caps the connections open at once (each is a thread);
     # one accepted over it gets 503 and is closed at once.
+    # http2: a connection that opens with the HTTP/2 connection preface is
+    # served as HTTP/2 over cleartext (h2c with prior knowledge, RFC 9113
+    # section 3.3); false answers it as HTTP/1.1 would (400).
+    # max_streams caps the streams one HTTP/2 connection has open at once
+    # (SETTINGS_MAX_CONCURRENT_STREAMS).
     # @api public
     def initialize(handler, host: "127.0.0.1", port: 3000, read_timeout: 15, drain_timeout: 10.0,
                    max_head_bytes: 65536, max_body_bytes: 10_485_760, logger: HttpLog.new,
                    reuse_port: false,
                    stream_write_timeout: 15, listen_fd: -1,
-                   head_timeout: 30.0, body_timeout: 120.0, max_connections: 1024)
+                   head_timeout: 30.0, body_timeout: 120.0, max_connections: 1024,
+                   http2: true, max_streams: 100)
       @handler = handler
+      @http2 = http2
       @listen_fd = listen_fd
       @stream_write_timeout = stream_write_timeout
       @host = host
@@ -188,6 +198,8 @@ module SpinelHttp
       # The bytes a connection over max_connections is answered with, built
       # once: shedding allocates no response.
       @overloaded = overloaded_text
+      @h2_limits = Http2Limits.new(@read_wait, @head_timeout, @body_timeout, max_head_bytes, max_body_bytes,
+                                   stream_write_timeout, max_streams)
     end
 
     # Binds, listens and spawns the accept thread; returns once listening.
@@ -257,6 +269,35 @@ module SpinelHttp
     def request_stop
       @running = false
       nil
+    end
+
+    # What an {Http2Session} calls back: whether the server is still
+    # running, its logger, the handler's response for a request (or the
+    # error response for what it raised), an error response of a status,
+    # and a streaming response's writer run under its log context.
+    # @api private
+    def h2_running?
+      @running
+    end
+
+    # @api private
+    def h2_logger
+      @logger
+    end
+
+    # @api private
+    def h2_handle(request)
+      handle(request)
+    end
+
+    # @api private
+    def h2_error_response(status)
+      error_response(status)
+    end
+
+    # @api private
+    def h2_run_writer(writer, sink, ctx)
+      run_writer_scoped(writer, sink, ctx)
     end
 
     private
@@ -629,6 +670,18 @@ module SpinelHttp
     def serve(sock, conn)
       remote_addr = sock.peeraddr[3].to_s
       buf = +""
+      if @http2
+        # The first bytes decide: the HTTP/2 preface, or a request head.
+        first = first_bytes(sock, conn)
+        return if first.empty?
+
+        if first.bytesize >= Http2Session::PREFACE.bytesize && first.byteslice(0, Http2Session::PREFACE.bytesize) == Http2Session::PREFACE
+          rest = first.byteslice(Http2Session::PREFACE.bytesize, first.bytesize - Http2Session::PREFACE.bytesize)
+          Http2Session.new(self, sock, conn, remote_addr, rest, @h2_limits).h2_serve
+          return
+        end
+        buf << first
+      end
       while true
         idx = buf.byteindex(HttpParser::HEAD_END)
         # 0.0 until the head's first byte is here (a pipelined head's is)
@@ -690,6 +743,28 @@ module SpinelHttp
     ensure
       sock.close unless sock.closed?
       connection_closed(conn)
+    end
+
+    # The first bytes of a connection: read until they are no longer the
+    # start of the HTTP/2 preface or the whole preface is there, "" when the
+    # client was silent for read_timeout (a request head's first byte
+    # starts head_timeout, as in serve). Returned, not appended through a
+    # parameter (NOTES.md rule 8).
+    def first_bytes(sock, conn)
+      got = +""
+      deadline = 0.0
+      while got.bytesize < Http2Session::PREFACE.bytesize
+        if got.empty?
+          return got unless head_readable?(sock, conn)
+        else
+          return got unless Http2Session::PREFACE.start_with?(got)
+
+          deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @head_timeout if deadline == 0.0
+          return "" unless readable_before?(sock, deadline)
+        end
+        got << sock.readpartial(READ_CHUNK)
+      end
+      got
     end
 
     # Waits for the first bytes of a request head, on a connection with

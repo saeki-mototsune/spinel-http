@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **HTTP/2** (RFC 9113) over cleartext TCP, on the same port as HTTP/1.1:
+  a connection that opens with the HTTP/2 preface (h2c with prior
+  knowledge, as `curl --http2-prior-knowledge` and an h2c proxy upstream
+  send) is served as HTTP/2, with HPACK (RFC 7541), flow control in both
+  directions, CONTINUATION, padding, trailers, PING, GOAWAY on stop, and
+  streaming responses as DATA frames. Handlers are unchanged;
+  `request.http_version` is `"HTTP/2"`. On by default; `http2: false`
+  turns it off.
+- `max_streams:` (default 100) caps the streams open on one HTTP/2
+  connection. The existing limits and timeouts apply to HTTP/2 too:
+  `max_head_bytes` to header blocks, `max_body_bytes` to each body and to
+  the bodies buffered on a connection, `head_timeout` to each frame and
+  header block, `body_timeout` to each stream's body, `read_timeout` to an
+  idle connection, `stream_write_timeout` to writes and to the wait for
+  WINDOW_UPDATE.
+- `Response#h2_fields`, the header list of a response for HTTP/2.
+
 ## 0.2.0
 
 - **Security (CWE-400, slowloris):** `read_timeout` bounded each wait for

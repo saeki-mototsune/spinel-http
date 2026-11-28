@@ -1,0 +1,11 @@
+ok   C.3 requests without Huffman share one dynamic table
+ok   C.4 requests with Huffman
+ok   C.6 responses with Huffman evict from a 256-byte table
+ok   Huffman decodes every byte value
+ok   Huffman refuses EOS, padding over 7 bits and padding that is not ones
+ok   an index past the tables, index 0 and a truncated block are errors
+ok   a table size update must come first and stay within the limit
+ok   a list over its limit is decoded to the end but not kept
+ok   the encoder indexes :status, names from the static table and signals size 0 first
+ok   integers past one byte, and a long value, round-trip
+10 tests, 50 assertions, 0 failures

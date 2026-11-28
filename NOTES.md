@@ -188,3 +188,15 @@ upstream issue filed yet. A comment in the code cites the rule it follows as
     static `ffi_buffer`.** The C side writes the address of its output
     buffer through the slot; a slot shared across calls would be overwritten
     by the next one. GzipDecoder allocates a slot for each call.
+
+20. **Binary bytes are built with `Integer#chr` and `<<`, and compared with
+    ASCII-only literals or byte by byte.** HTTP/2 frames and HPACK blocks
+    are binary. `b.chr` appends the one byte `b` (0..255) under Spinel, and
+    a String built that way compares equal to an ASCII-only literal; a
+    literal written with `\x` escapes over 127 (`"\x1f\x9a\x0a"`) compared
+    unequal to the same bytes built with `chr` (fork 2026.11.23.7035; CRuby
+    too, where the literal is UTF-8 and the built String binary), and
+    one holding NUL is rule 8's hazard. So Http2Session.frame, Hpack's
+    encoders and the tests build every binary String with `chr`, and the
+    tests compare such Strings with `getbyte` or with a String built the
+    same way.
